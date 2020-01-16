@@ -1,0 +1,155 @@
+---
+title: "Brain Age Acceleration, Padlocks"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+
+```{r, include=FALSE}
+source("../code/common.R")
+params <- list(
+  host = system("hostname", intern=TRUE),
+  nPerm = 40,
+  workers = 41,
+  outliers = list(
+    thresholdSD = 3,
+    noOfPCs = 2,
+    removeOutliers = TRUE,
+    shape = "Group"
+  ),
+  clustering = list(
+    groups = c(Group="Group", Sex="Sex", Plate="substr(ID, 1, 1)"),
+    addClustersToModel = 0
+  ),
+  normalization = list(
+    normalize = FALSE,
+    plotColor = c("Group", "Sex")
+  ),
+  imputation    = list(
+    imputeBetas = FALSE,
+    imputeCounts= FALSE
+  ),
+  model = list(
+    formula = "~ 0 + Group + Group:Age + Sex + PMI + GLU",
+    formula0= "~ 0 + Group + Age + Sex + PMI + GLU",
+    contrasts = c("GroupCTRL.Age", "GroupPD.Age"),
+    svRange = 1:6
+  )
+)
+```
+
+# Parameters
+
+```{r, include=TRUE}
+params %>% jsonlite::toJSON(pretty=TRUE, auto_unbox = TRUE)
+```
+
+# Data
+
+
+```{r}
+padlock <- function() {
+  data <- list()
+
+  # Data directory
+  d <- "../input/PD_Padlock_Autophagy/"
+
+  # Sample key
+  data$sample <- fread(file.path(d, "Covar_Outliers_RepAvg_Prop"))
+
+  # read the beta values
+  data$beta <- fread(file.path(d, "CXreport_Sort_30xCov_BetaValues_Target_Outliers_RepAvg_30na_rm0_SNP.tsv"))  
+
+  # Move probe annotation to genome
+  data$genome <- data$beta[, 1:6, with=FALSE] %>% 
+    .[, list(Chr = chr, SNP=loc, Type=type, Seq=seq, Str=str)] %>%
+    .[, ID := paste(Chr, SNP, sep="_")]
+  data$beta <- data$beta[, -(1:6), with=FALSE] %>%
+    as.matrix
+  rownames(data$beta) <- data$genome$ID
+
+  # read the sample counts
+  data$counts <- fread(file.path(d, "CXreport_Sort_Reads_30xCov_Target_Outliers_RepAvg_30na_rm0_SNP.tsv"))
+  data$counts[, ID := paste(chr, loc, sep="_")]
+
+  # reduce counts to the Cs present in the beta file
+  data$counts <- data$counts[ ID %in% data$genome$ID]
+  stopifnot(all(data$genome$ID == data$counts$ID))
+  data$counts[, ID := NULL]
+  data$counts <- data$counts[, -(1:6), with=FALSE] %>% as.matrix 
+  rownames(data$counts) <- data$genome$ID
+
+  # Fix sample names 
+  data$sample$ID <- data$sample$ID %>% 
+    strsplit(., split="_") %>% 
+    sapply(., `[[`, 2)
+  stopifnot(all(colnames(data$counts) == data$sample$ID))
+  stopifnot(all(colnames(data$beta) == data$sample$ID))
+
+  # Now match loci
+  stopifnot(all(data$genome$ID == rownames(data$beta)))  
+  stopifnot(all(data$genome$ID == rownames(data$counts)))  
+
+  # For consistency with older data
+  data$modelData <- data$sample[, list(
+    Age, 
+    Group = Group %>% as.factor %>% relevel("CTRL"), 
+    Sex, PMI, GLU=proportions_GLU)]
+
+  return(data)
+}
+
+# touch()
+data <- cache(foo=padlock, fname="data.RDS", verbose=TRUE)
+
+```
+
+Resulting data structure:
+
+```{r, include=TRUE}
+sapply(data, dim)
+```
+
+<!-- Run the processing pipeline -->
+```{r, child="../code/padlockPipeline.Rmd"}
+```
+
+
+# Robust lmFit
+
+50% stable, non extreme change, M values, robust limma eBayes
+
+```{r, include=TRUE, echo=TRUE}
+methylation <- data$beta
+prefix <- "m6_"
+modelparams <- list(
+    allowStable = 0.5,
+    useMvalues  = TRUE,
+    fixInfinity = 0.0005, # Fraction of change for 0% and 100% methylated locations
+    downloadDataMatrix = TRUE,
+    accelerationVariable = "Group" # Name of variable to test differential acceleration
+  )
+```
+
+
+```{r, child="../code/padlockLmFit_2.Rmd"}
+```
+
+
+
+# SessionInfo
+
+```{r, include=TRUE}
+sessionInfo()
+```
+
+

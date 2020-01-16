@@ -1,0 +1,436 @@
+---
+title: "Figure 1"
+output:
+  html_document:
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+require("annotatr")
+require("GenomicRanges")
+require("ggrepel")
+require("biomaRt")
+require("GO.db")
+require("cowplot")
+require('broom')
+require('pacman')
+p_load('magick')
+source("../code/common.R", chdir=TRUE)
+
+meth <- fread(
+  "../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+rna <- fread(
+  "../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+
+enrichment <- readRDS("../Results_Appendix/enrichment_Appendix_PDvsControls_Padlock.RDS")
+
+
+# GWAS genes
+geneList <- c("GBA","NUCKS1","SLC41A1","SIPA1L2","TMEM163","CCNT2","STK39","CHMP2B","MCCC1","TMEM175","DGKQ","FAM200B","CD38","FAM47E","SNCA","HLA-DRB6","HLA-DQA1","KLHL7","NUPL2","GPNMB","MICU3","BAG3","DLG2","MIR4697","LRRK2","OGFOD2","GCH1","TMEM229B","VPS13C","ZNF646","KAT8","ARHGAP27","CRHR1","SPPL2C","MAPT","STH","KANSL1","SYT4","LSM7","DDRGK1","ITPKB","IL1R2","SCN3A","SATB1","NCKIPSD","CDC71","ALAS1","TLR9","DNAH1","BAP1","PHF7","NISCH","STAB1","ITIH3","ITIH4","ANK2","CAMK2D","ELOVL7","ZNF184","CTSB","SORBS3","PDLIM2","C8orf58","BIN3","SH3GL2","FAM171A1","GALC","COQ7","TOX3","ATP6V0A1","PSMC3IP","TUBG2")
+
+theme_publication <- function(font = 7) {
+  theme(
+    text = element_text(family = "Helvetica", size = font, color = "black"),
+    plot.title = element_text(size = font, color = "black"),
+
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    panel.border = element_blank(),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.line = element_line(color = "black"),
+    axis.text = element_text(size = font, color = "black"), 
+    axis.ticks = element_line(size = 0.3, color = "black"),
+    axis.title = element_text(size = font, color = "black"),
+
+    # strip.background = element_rect(color = "white", fill = "white"),
+    strip.text.x = element_text(size = font, color = "black"),
+    strip.text.y = element_text(size = font, color = "black"),
+
+    legend.background = element_rect(
+      fill = alpha("white", 0),
+      color = alpha("white", 0)
+    ),
+    legend.key = element_rect(color = NA, fill = NA),
+    legend.key.size = unit(0.2, "cm"),    
+    legend.text = element_text(size = font)
+  )
+}
+```
+
+
+```{r}
+# Annotation of methylation fits
+require("TxDb.Hsapiens.UCSC.hg19.knownGene")
+require("org.Hs.eg.db")
+genome <- "hg19"
+annots <- c('hg19_cpgs', 'hg19_basicgenes', 'hg19_genes_intergenic')
+annotations <- build_annotations(genome = genome, annotations = annots)
+
+fitsgr <- with(meth, GRanges(seqnames=Chr, IRanges(SNP, SNP+1)))
+if (!is.null(meth$Str))
+  strand(fitsgr) <- meth$Str
+values(fitsgr) <- meth[, list(ID, logFC, P.Value, adj.P.Val)]
+annot <- annotate_regions(
+  regions = fitsgr,
+  annotations = annotations,
+  ignore.strand = TRUE,
+  quiet = FALSE)
+annot <- data.frame(annot) %>% setDT
+rm(fitsgr)
+
+
+```
+
+```{r}
+pathways <- readRDS("../Discover_Pathways/humanPathways.RDS")
+lapply(pathways, `[[`, 3) %>% sapply(length)
+```
+
+```{r}
+# A
+# Manhattan plot
+
+foo <- function(snps, pvals) {
+  snps[ which.min(pvals)]
+}
+
+foo2 <- function(N, SNP) {
+  i <- which.max(N)
+  return(SNP[i])
+}
+
+
+getColorGroup <- function(Chr, Q, S) {
+  Chr <- as.numeric(Chr)
+  Q <- as.numeric(Q)
+  S <- as.numeric(S)
+  df <- data.frame(Chr, Q, S)
+  apply(df, 1, function(I) {
+    I <- as.list(I)
+    if (I$Chr %% 2 == 0) {
+      # Darker colors
+      if (I$Q > 0.05) {
+        "dark grey"
+      } else {
+        ifelse(I$S > 0, "dark positive", "dark negative")
+      }
+    } else {
+      # Brighter colors
+      if (I$Q > 0.05) {
+        "light grey"
+      } else {
+        ifelse(I$S > 0, "light positive", "light negative")
+      }
+    }
+  }) %>% unlist
+}
+
+fit <- copy(meth)
+fit[ log10(P.Value) < -10, P.Value := 1e-10]
+effects <- 
+  fit[ toupper(Gene) %in% geneList & adj.P.Val < 0.05, ] %>% 
+    # count how many times each gene is negative of positive
+    .[, list(.N, SNP = foo(SNP, P.Value), P = min(P.Value)), by=list(Gene, sign(logFC))] %>%
+    # select the sign which has more representation
+    .[, list(SNP=foo2(N, SNP)), Gene] %>%
+    .[, Label := TRUE] %>% 
+    merge(fit, ., by=c("Gene", "SNP"), all.x=TRUE)
+effects[is.na(Label), Label := FALSE]
+
+
+# Format the input data
+effects <- effects %>%
+  .[, Diff := logFC ] %>%
+  .[, SNP := strsplit(ID, split="_") %>% sapply(., '[[', 2) %>% as.numeric] %>%
+  .[, P := P.Value] %>%
+  .[, Q := adj.P.Val] %>%
+  # Fix chromosome name 
+  .[, Chr := gsub("chr", "", Chr) ] %>% 
+  # Give chromosomes numbers
+  .[, ChrNo :=  Chr %>% gsub("X", "23", .) %>% gsub("Y", "24", .) %>% as.numeric]  %>%
+  setkey(ChrNo, SNP)
+
+# Prepare plot data
+effects <- effects[!is.na(Q)]
+pd <- effects %>% 
+  # Subsample 
+  .[ Q < 0.05 | ID %in% sample(ID, .N*0.15, prob=-log10(P))] %>%  
+  # Compute chromosome size
+  .[, list(ChrLen = max(SNP)), ChrNo] %>%
+  # Calculate cumulative position of each chromosome
+  .[, list(ChrNo, Tot = cumsum(ChrLen) - ChrLen)] %>%
+  # Add this info to the initial dataset
+  merge(effects, ., by=c("ChrNo")) %>%
+  # Sort by ChrNo and position 
+  .[ order(ChrNo, SNP), ] %>%
+  # Compute position for each SNP on x axis
+  .[, Loc := SNP + Tot] %>%
+  # Get color group
+  .[, Color := getColorGroup(ChrNo, Q, Diff) %>% as.factor ] %>%
+  setkey(Loc)
+
+# Prepare the x axis
+pdAxis <- pd %>% 
+  .[, list(center = ( max(Loc) + min(Loc) ) / 2 ), by=list(Chr, ChrNo)] %>%
+  # omit some chromosomes
+  .[, Chr := ifelse(ChrNo %in% seq(15, 21, 2), "", Chr)]
+
+
+# Prepare FDR thresholds
+pdThresholds <- pd[adj.P.Val < 0.05, 
+   list(
+     Y = sign(max(logFC)) * (-1) * log10(max(P)), 
+     Label = "q < 0.05"),
+   by = sign(logFC)] %>%
+  .[, X := pd[, min(Loc)]]
+
+# Prepare the core plot
+pA <- 
+  ggplot(pd, aes(x=Loc, y=-1 * sign(Diff) * log10(P))) +
+    # Show grey points
+    geom_point(data = pd[adj.P.Val > 0.05], aes(color=Color, shape=Color), 
+      alpha=1, size=0.5) +
+    # Show significant points
+    geom_point(data = pd[adj.P.Val <= 0.05], aes(color=Color, shape=Color), 
+      alpha=1, size=1) + 
+    # Plot horizontal FDR lines
+    geom_hline(
+      data = pdThresholds, 
+      aes(yintercept = Y), 
+      alpha=1, size=0.25, color = "red", linetype = 2) +
+    geom_text(
+      data = pdThresholds[1],
+      aes(x = X, y = Y, label = Label),
+      size = 2.2, color = "red", vjust = -0.1, hjust = 0.35
+    ) + 
+    # custom X axis:
+    scale_x_continuous( label = pdAxis$Chr, breaks= pdAxis$center) +
+    scale_color_manual( values = c("grey60", "#1f78b4", "#33a02c", 
+                                   "grey80",   "#a6cee3","#b2df8a")) +
+    scale_shape_manual("", values = c(1, 16, 16, 1, 16, 16)) + 
+    guides(color = FALSE, shape = FALSE) +
+    # Add labels
+    geom_point(data=pd[Label == TRUE], color="orange", size=1.3) +
+    geom_label_repel(data=pd[Label == TRUE], aes(label=Gene), size=2.2) +
+    # Label the axes
+    xlab("Chromosome") + 
+    ylab("Signed log p") + 
+    theme_publication()
+
+```
+
+```{r}
+# B
+# Hyper/hypo methylation 
+t <- meth[, table(sign(logFC), adj.P.Val < 0.05)]
+f <- fisher.test(t)
+
+pd <- t %>%
+  reshape2::melt() %>%
+  setDT %>%
+  setnames(c("Direction", "Significant", "Count"))
+pd[, Color := 0]
+pd[Significant == TRUE, Color := Direction %>% as.numeric]
+
+pd[, Direction := 
+      factor(Direction, 
+        levels = c(-1, 1), 
+        labels=c("Hypo-\n methylation", "Hyper-\n methylation"))
+  ]
+pd[, Significant := 
+      factor(Significant, 
+        levels=c(FALSE, TRUE), 
+        labels=c("Background", "Significant"))
+  ]
+pd[, Fraction := Count / sum(Count), Significant]
+pd[, Type := "CpG modification"]
+
+# Up/down expression
+t2 <- rna[, table(sign(logFC), adj.P.Val < 0.05)]
+f2 <- fisher.test(t2)
+pd2 <- t2 %>%
+  reshape2::melt() %>%
+  setDT %>%
+  setnames(c("Direction", "Significant", "Count"))
+pd2[, Color := 0]
+pd2[Significant == TRUE, Color := Direction %>% as.numeric]
+pd2[, Direction := 
+      factor(Direction, 
+        levels = c(-1, 1), 
+        labels=c("Down-\n regulation", "Up-\n regulation"))
+  ]
+pd2[, Significant := 
+      factor(Significant, 
+        levels=c(FALSE, TRUE), 
+        labels=c("Background", "Significant"))
+  ]
+pd2[, Fraction := Count / sum(Count), Significant]
+pd2[, Type := "RNA expression"]
+
+or <- f$estimate %>% format(digits = 3)
+pv <- f$p.value  %>% format(digits = 3, scientific = TRUE) %>%
+    gsub("e", "~x~10^", .) %>% paste0("\"p =\"~", .)
+text1 <- glue("{pv}")
+or <- f2$estimate %>% format(digits = 3)
+pv <- f2$p.value  %>% format(digits = 3, scientific = TRUE) %>%
+    gsub("e", "~x~10^", .) %>% paste0("\"p =\"~", .)
+text2 <- glue("{pv}")
+
+pd[, Color := Color %>% factor(levels = c(-1, 1, 0))]
+
+pB <- 
+  pd %>%
+  ggplot(., 
+    aes(Direction, Fraction, 
+      fill = Color %>% as.factor,
+      color = Color %>% as.factor)) + 
+    geom_bar(stat = "identity", 
+      position = position_dodge(width=0.5), 
+      width=0.95) + 
+    annotate("text", x=1.5, y=0.70, label=text1, size=2.2, parse = TRUE) + 
+    scale_y_continuous(labels = scales::percent_format(accuracy=1),
+      limits = c(0, 0.75)) +
+    scale_fill_manual("", values=c("#1f78b4", "#33a02c", "white")) + 
+    scale_color_manual("", values=c("#1f78b4", "#33a02c", "grey60")) + 
+    ylab("Fraction, %") +   
+    guides(fill = FALSE, color = FALSE) + 
+    theme_publication() + 
+    theme(axis.title.x = element_blank())
+```
+
+
+```{r}
+# C
+# Enrichment
+
+pd <- enrichment[[1]] %>%
+  .[Type == "All", list(Category, OR, Lo, Hi, P)]
+pd[, Group := strsplit(Category, split = "_") %>% sapply(`[[`, 2)]
+pd[, Group := Hmisc::capitalize(Group)]
+pd[Group == "Cpg", Group := "CpG Islands"]
+pd[, Label := strsplit(Category, split = "_") %>% sapply(`[[`, 3)]
+pd[, Label := Hmisc::capitalize(Label)]
+
+
+pd2 <- enrichment[[2]] %>%
+  .[Type == "All", list(Category, OR, Lo, Hi, P)] %>%
+  .[, Group := "ChIP-seq"] %>%
+  .[, Label := gsub("Enhancer", " Enh", Category)]
+
+pd <- rbind(pd, pd2)
+pd[, OR := log(OR)]
+pd[, Hi := log(Hi)]
+pd[, Lo := log(Lo)]
+
+pd[, Group := factor(Group, levels = c("Genes", "CpG Islands", "ChIP-seq"))]
+pd[, Label := factor(Label, 
+                     levels = c("Intergenic", "1to5kb", "Promoters", 
+                                "5UTRs", "Exons", "Introns", "3UTRs",
+                                "Inter", "Shelves", "Shores", "Islands",
+                                "Active Enh", "Poised Enh", 
+                                "Promoter"),
+                     labels = c("Intergenic", "1to5kb", "Promoters", 
+                                "5UTRs", "Exons", "Introns", "3UTRs",
+                                "Open Sea", "Shelves", "Shores", "Islands",
+                                "Active Enh", "Poised Enh", 
+                                "Active Promoter"))]
+pd[, Shape := ifelse(P < 0.05, "P < 0.05", "P > 0.05")]
+pd[, Stars := gtools::stars.pval(P)]
+
+
+
+
+# pd$Ptxt <- pd[, P] %>% format(digits = 3, scientific = TRUE) %>%
+#   gsub("e", '~x~10^', .) %>% paste0("\"p =\"~", .)
+pC <- ggplot(pd, aes(OR, Label, xmin=Lo, xmax=Hi, shape=Shape)) + 
+  geom_point(size = 1.2) +
+  geom_errorbarh(height=0.15, size = 0.25) + 
+  geom_vline(xintercept = 0, color = "grey50", size = 0.25) +
+  geom_text(
+    aes(label = Stars, color = P < 0.05), x = 2,
+    parse = FALSE, size = 2.2, hjust = 0) + 
+  facet_grid(Group ~ ., scales="free", space = "free_y") + 
+  xlab("Odds ratio, log") + 
+  xlim(-1, 2.3) + 
+  guides(shape = FALSE, color = FALSE) + 
+  scale_color_manual("", values = c("grey60", "black")) + 
+  scale_shape_manual("", values = c(16, 1)) + 
+  theme_publication() + 
+  theme(
+    axis.title.y = element_blank())
+```
+
+
+```{r}
+# D and E combined
+
+pd <- rbind(
+  fread("../Results_Appendix/www/enrichment_Pathways_DEGs.csv")[, Type := "RNA-seq\nDown-regulation"], 
+  fread("../Results_Appendix/www/enrichment_Pathways_DMCs.csv")[, Type := "DNA\nmethylation"])
+
+pd <- 
+pd[ (Type == "DNA\nmethylation" & Dir == "All") | (Type == "RNA-seq\nDown-regulation" & Dir == "Hypo-")] %>%
+.[, TermName := paste(Name, sep=" ") %>% gsub(" ", "\n", .) %>% as.factor] %>%
+.[, P := p.value %>% format(digits = 3, scientific = TRUE) %>% gsub("e", "~x~10^", .)] %>%
+.[, P := paste0("\"p =\"~", P)] %>%
+.[, Stars := gtools::stars.pval(p.value)] %>%
+.[Stars == ".", Stars := ""] %>%
+.[, estimate := log(estimate)] %>%
+.[, conf.low := log(conf.low)] %>%
+.[, conf.high := log(conf.high)]
+
+pD <- 
+  ggplot(pd, aes(TermName, estimate, fill = p.value < 0.05)) + 
+  geom_bar(stat = "identity", color = "grey50", size = 0.25) + 
+  geom_hline(yintercept = 0, color = "grey50", size = 0.25) + 
+  geom_text(aes(label = Stars), 
+    size = 2.2, vjust = 0) +   
+  facet_grid(Type ~ ., scales = "free_y") + 
+  scale_fill_manual("Enrichment p", labels = c("> 0.05", "< 0.05"), values = c("white", "black")) + 
+  scale_y_continuous(limits = c(NA, 0.45)) + 
+  ylab("Odds ratio, log") + 
+  theme_publication() + 
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = c(0.8, 0.8), 
+        legend.direction = "vertical")
+
+# quartz("", 7.2, 4.5)
+ggdraw() +
+  draw_plot(pD + guides(fill=FALSE), 
+    x = 0.28, y = -0.02,  width = .3, height = .65)
+
+
+```
+
+
+```{r, include = TRUE, fig.width = 7.2, fig.height = 4.5, dpi = 300, fig.cap="**Fig. 1. Epigenetic dysregulation of the ALP in the PD appendix, particularly at lysosomal genes.**"}
+# quartz("", 7.2, 4.5)
+legend <- get_legend(pD)
+suppressWarnings(
+	ggdraw() +
+	  draw_plot(pA, x = 0,   y = 0.6,  width = .72, height = .4) + 
+	  draw_image("../Figure1/cscape.png", # hack
+	                x = 0.48, y = 0.05,    width = .6, height = .6) +
+	  draw_plot(pB, x = 0.7, y = 0.63,  width = .3, height = .37) +   
+	  draw_plot(pC, x = 0,   y = 0,     width = .3, height = .63) + 
+	  draw_plot(pD + guides(fill=FALSE), 
+	    x = 0.28, y = -0.02,  width = .3, height = .65) +
+	  draw_plot(legend, x = 0.23, y = 0.41, width = 0.2, height = 0.2) +
+	  draw_plot_label(
+	    label = c("A", "B", "C", "D", "E"), 
+	    size = 10,
+	    x = c(0, 0.7, 0, 0.3, 0.58), 
+	    y = c(1, 1,   0.63, 0.63, 0.63))
+)
+ggsave("../Figure1/figure1.png", width = 7.2, height = 4.5, dpi = 300, units = "in")
+```
+

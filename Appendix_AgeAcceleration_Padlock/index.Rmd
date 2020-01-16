@@ -1,0 +1,215 @@
+---
+title: "Appendix Age Acceleration, Padlocks"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+source("../code/plots.R")
+source("../code/linearFits.R")
+source("../code/manhattanPlot.R")
+
+params <- list(
+  host          = system("hostname", intern=TRUE),
+  nPerm         = 40,
+  workers       = 41,
+  outliers      = list(
+    thresholdSD = 3,
+    noOfPCs     = 2,
+    removeOutliers = TRUE,
+    shape       = "Diagnosis",
+    perCohort   = TRUE
+  ),
+  clustering    = list(
+    groups      = c(Gender="Sex", Cohort="Batch", 
+      Plate="substr(ID, 1, 1)"),
+    addClustersToModel = 0
+  ),
+  normalization = list(
+    normalize   = TRUE,
+    plotColor   = c("Batch")
+  ),
+  imputation    = list(
+    imputeBetas = FALSE,
+    imputeCounts= FALSE
+  ),
+  model         = list(
+    formula     = "~ 0 + Diagnosis + Diagnosis:Age + Cohort + Sex + PMI",
+    formula0    = "~ 0 + Diagnosis + Age + Cohort + Sex + PMI",
+    contrasts = c("DiagnosisControl.Age", "DiagnosisPD.LBD.Age"),
+    svRange     = 1:6
+  )
+)
+
+```
+
+
+# Parameters
+
+
+```{r, include=TRUE}
+params %>% jsonlite::toJSON(pretty=TRUE, auto_unbox = TRUE)
+```
+
+
+# Data
+
+Combined together all appendix samples
+
+```{r}
+
+# Load full methylation data 
+padlock <- function() {
+  data <- list()
+  # Data directory
+  d <- "../input/PD_Appendix_AgingCohort"
+
+  # read the sample key
+  data$sample <- fread(file.path(d, "Aging_factor_sva.txt"))
+  setnames(data$sample, "Sample_ID", "ID")
+  data$sample <- data$sample %>% select(-sva1, -sva2, -sva3, -sva4)
+
+  # read the beta values
+  data$beta <- fread(file.path(d, "data_raw_target_methy_noWGA_aveReplicate_Aging_70p_rm0_rmCommonSNP_CG.txt"))  
+
+  # Move probe annotation to genome
+  data$genome <- data$beta[, 1:5, with=FALSE] %>% 
+    .[, ID := paste(chr, SNP, sep="_")]
+  data$beta <- data$beta[, -(1:5), with=FALSE] %>%
+    as.matrix
+  rownames(data$beta) <- data$genome$ID
+  data$beta <- data$beta / 100
+
+  # read the sample counts
+  data$counts <- fread(file.path(d, "data_raw_target.txt"))
+
+  # Select CGs only
+  data$counts <- data$counts[type == "CG"]
+  data$counts[, ID := paste(chr, SNP, sep="_")]
+
+
+  # get separate matrices for U and M
+  id <- data$counts$ID
+  ume_idx <- grep("_UMe", colnames(data$counts))
+  me_idx <- grep("_Me", colnames(data$counts))
+  data$countsU <- data$counts[, ume_idx, with=FALSE] %>% as.matrix
+  data$countsM <- data$counts[, me_idx, with=FALSE] %>% as.matrix
+  data$counts  <- data$countsU + data$countsM
+
+  # Fix all names
+  rownames(data$counts) <- rownames(data$countsU) <- rownames(data$countsM) <- id
+  colnames(data$counts) <- colnames(data$countsU) <- colnames(data$countsM) <- gsub("_UMe", "", colnames(data$counts))
+
+  # reduce counts to the Cs present in the beta file
+  data$counts <- data$counts[data$genome$ID, ]
+  data$countsU <- data$countsU[data$genome$ID, ]
+  data$countsM <- data$countsM[data$genome$ID, ]
+
+  # Take only samples present in beta
+  data$counts <- data$counts[, colnames(data$beta)]
+  data$countsU <- data$countsU[, colnames(data$beta)]
+  data$countsM <- data$countsM[, colnames(data$beta)]
+
+
+  # Now match loci
+  stopifnot(all(data$genome$ID == rownames(data$beta)))  
+  stopifnot(all(data$genome$ID == rownames(data$counts)))  
+  stopifnot(all(data$genome$ID == rownames(data$countsU)))  
+  stopifnot(all(data$genome$ID == rownames(data$countsM)))  
+
+  #Address PMI unit issue
+  data$sample[, PMI := PMI / 60]
+
+
+  data$modelData <- data$sample[, list(
+    Age = as.numeric(Age),
+    Sex = as.factor(Sex), 
+    PMI = as.numeric(PMI))]
+
+  return(data)  
+}
+
+
+# touch()
+data <- cache(foo=padlock, fname="data_agingCohort.RDS", verbose=TRUE)
+
+# PDs and Controls
+data2 <- readRDS("../Appendix_PDvsControls_Padlock/data.RDS")
+
+
+# Combine two datasets
+ids <- intersect(data$genome$ID, data2$genome$ID)
+beta <- cbind(data$beta[ids,] , data2$beta[ids, ])
+counts <- cbind(data$counts[ids, ], data2$counts[ids, ])
+countsU <- cbind(data$countsU[ids, ], data2$countsU[ids, ])
+countsM <- cbind(data$countsM[ids, ], data2$countsM[ids, ])
+genome <- data$genome[ID %in% ids, ] %>%
+  setnames(., Hmisc::capitalize(colnames(.)))
+sample <- rbind(
+  data$sample[, list(ID, Diagnosis, Age, Sex, PMI, Batch = 0, Cohort="Aging")],
+  data2$sample[, list(ID, Diagnosis, Age, Sex, PMI, Batch, Cohort="PD")]
+  )
+data <- list(beta = beta, counts = counts, countsU = countsU, countsM = countsM, genome = genome, sample = sample)
+rm(ids, beta, counts, countsU, countsM, genome)
+
+data$modelData <- data$sample[, 
+  list(Age, Sex, PMI, Diagnosis, Cohort=Batch)]
+data$modelData[, Cohort := droplevels(as.factor(Cohort))]
+data$modelData[, Sex := as.factor(Sex)]
+data$modelData[, Age := as.numeric(Age)]
+data$modelData[, PMI := as.numeric(PMI)]
+data$modelData[, Diagnosis := as.factor(Diagnosis) %>% relevel("Control")]
+
+```
+
+
+Resulting data structure:
+
+```{r, include=TRUE}
+sapply(data, dim)
+```
+
+<!-- Run the processing pipeline -->
+```{r, child="../code/padlockPipeline.Rmd"}
+```
+
+# Robust lmFit v2
+
+
+50% stable, non extreme change, M values, robust limma eBayes
+
+```{r, include=TRUE, echo=TRUE}
+methylation <- data$beta
+prefix <- "m6_"
+modelparams <- list(
+    allowStable = 0.5,
+    useMvalues  = TRUE,
+    fixInfinity = 0.001, # Fraction of change for 0% and 100% methylated locations
+    downloadDataMatrix = TRUE,
+    accelerationVariable = "Diagnosis" # Name of variable to test differential acceleration
+  )
+```
+
+
+```{r, child="../code/padlockLmFit_2.Rmd"}
+```
+
+```{r, child="../code/ageAcceleration.Rmd"}
+```
+
+# SessionInfo
+
+```{r, include=TRUE}
+sessionInfo()
+```
+

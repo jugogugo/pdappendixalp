@@ -1,0 +1,467 @@
+---
+title: "Appendix Age Acceleration, RNAseq"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+
+
+```{r, include=FALSE}
+source("../code/common.R")
+source("../code/plots.R")
+source("../code/linearFits.R")
+source("../code/manhattanPlot.R")
+
+require("edgeR")
+
+params <- list(
+  host          = system("hostname", intern=TRUE),
+  nPerm         = 40,
+  workers       = 41,
+  outliers      = list(
+    thresholdSD = 3,
+    noOfPCs     = 2,
+    removeOutliers = TRUE,
+    shape       = "Diagnosis"
+  ),
+  clustering    = list(
+    groups      = c(
+            				Diagnosis="Diagnosis", 
+            				Gender="Sex", 
+            				Cohort = "Cohort",
+            				Plate="substr(Sample_ID, 1, 1)", 
+            				RIN = "RIN < median(RIN)"),
+    addClustersToModel = 0
+  ),
+  normalization = list(
+    normalize   = TRUE,
+    plotColor   = c("Cohort")
+  ),
+  imputation    = list(
+    imputeBetas = FALSE,
+    imputeCounts= FALSE
+  ),
+  model         = list(
+    formula     = "~ 0 + Diagnosis + Diagnosis:Age + Cohort + Sex + PMI + RIN",
+    formula0    = "~ 0 + Diagnosis + Age + Cohort + Sex + PMI + RIN",
+    contrasts = c("DiagnosisControl.Age", 
+    			  "DiagnosisPD.LBD.Age"),
+    svRange     = 1:6,
+    bacon       = FALSE
+  )
+)
+
+```
+
+
+
+# Parameters
+
+```{r, include=TRUE}
+params %>% jsonlite::toJSON(pretty=TRUE, auto_unbox = TRUE)
+```
+
+# Data
+
+```{r}
+getAllGenes <- function() {
+  library(stringr)
+  # gencode <- fread("../etc/gencode.v30.human.gtf.gz")
+  gencode <- fread("../etc/gencode.v19.annotation.gtf.gz")
+
+  mysymbols <- 
+    gencode[V3 == "gene", V9] %>%
+    strsplit(., split = ";") %>%
+    lapply(., `[`, c(1, 5)) %>%
+    lapply(t) %>% 
+    lapply(as.data.table) %>%
+    rbindlist %>%
+    setnames(c("ENSEMBL", "SYMBOL")) %>%
+    .[, ENSEMBL := gsub("gene_id \"", "", ENSEMBL)] %>%
+    .[, ENSEMBL := gsub("\\..*", "", ENSEMBL)] %>%
+    .[, SYMBOL := gsub("gene_name \"", "", SYMBOL)] %>%
+    .[, SYMBOL := gsub("[ \"]", "", SYMBOL)]
+
+  mysymbols <- 
+    cbind(
+      gencode[V3 == "gene", c(1, 4, 5, 7), with=FALSE],
+      mysymbols
+    ) %>%
+    setnames(c("Chr", "Start", "End", "Str", "ENSEMBL", "SYMBOL"))
+  # get rid of duplicates
+  mysymbols[, 
+    list(
+      Chr=Chr[1], 
+      Start = min(Start), 
+      End = max(End), 
+      Str = Str[1], 
+      SYMBOL = SYMBOL[1]), 
+    ENSEMBL]
+}
+rnaseq <- function() {
+  require("edgeR")
+  require("AnnotationDbi")
+  require("org.Hs.eg.db")
+
+  data <- list()
+  path <- "../input/data cohort4_PD_Appendix_Peipei/RNA-Seq_VAI/mRNA_Aging/"
+
+  # read the sample key
+  data$sample <- 
+    fread(file.path(path, "mRNA_Aging_covar_sva.txt")) %>%
+    .[, list(Subject_ID, Sample_ID, Age, Sex, PMI, Diagnosis, RIN)]
+
+  fdir <-file.path(path, "expected_count")
+
+  # Read and clean gene expression data
+  files <- list.files(path = fdir)
+  counts <- readDGE(files, path = fdir, columns = c(1, 2), header = TRUE)
+  counts <- counts$counts
+  counts <- counts[, as.character(data$sample$Subject_ID)]
+  y <- DGEList(counts, group = data$sample$Diagnosis)
+  keep <- rowSums(cpm(y)>1) > 23
+  y <- y[keep, , keep.lib.sizes=FALSE]
+  y <- calcNormFactors(y,method="TMM")
+  data$counts <- y
+
+  # Change Entrez ID to gene name
+  data$genome <- data.table(ENSEMBL = rownames(y))
+  data$genome <- merge(data$genome, getAllGenes(), by = "ENSEMBL", all.x = TRUE, all.y = FALSE)
+
+  # TPM
+  fdir <- file.path(path, "RSEM_output")
+  files <- list.files(path=fdir)
+  tpm <- foreach(f = files) %do% {
+    sid <- strsplit(f, split="\\.")[[1]][1]
+    fread(file.path(fdir, f)) %>% 
+    .[, list(ENSEMBL=gene_id, TPM=TPM)] %>%
+    setnames("TPM", sid)
+  }
+
+  res <- tpm[[1]]
+  for(i in 2:length(tpm)) {
+    cat(".")
+    res <- merge(res, tpm[[i]], by="ENSEMBL")
+  }
+  cat("\n")
+  tpm <- res
+  lidx <- match(data$genome$ENSEMBL, gsub("\\..*$", "", tpm$ENSEMBL))
+  tpm <- tpm[lidx, ] %>% 
+          dplyr::select(-ENSEMBL) %>% 
+          as.matrix
+  rownames(tpm) <- data$genome$ENSEMBL
+  tpm <- tpm[, as.character(data$sample$Subject_ID)]
+  data$tpm <- tpm
+  rm(res, fdir, files, tpm, lidx)
+
+  # Address the PMI issue
+  data$sample[, PMI := PMI / 60]
+  
+  data$modelData <- data$sample[, list(
+    Age = as.numeric(Age), 
+    Sex = as.factor(Sex) %>% relevel("M"),
+    PMI = PMI,
+    RIN = RIN)
+  ]
+  return(data)
+}
+data <- cache(foo=rnaseq, fname="data_agingCohort.RDS", verbose=TRUE)
+
+foo <- function() {
+  data1 <- readRDS("data_agingCohort.RDS")
+  data2 <- readRDS("../Appendix_PDvsControls_RNAseq/data.RDS")
+
+
+  data <- list()
+  data$sample <- rbind(
+    data1$sample[, Cohort := "Aging"],
+    data2$sample[, Cohort := "PD"]
+    ) %>% 
+    .[, Sex := toupper(Sex) %>% as.factor %>% relevel("M")] %>%
+    .[, Diagnosis := as.factor(Diagnosis) %>% relevel("Control")] %>%
+    .[, RIN := as.numeric(RIN)] %>% 
+    .[, PMI := as.numeric(PMI)] %>%
+    .[, Age := as.numeric(Age)]
+
+  allGenes <- intersect(data1$genome$ENSEMBL, data2$genome$ENSEMBL)
+  data$genome <- data1$genome[ ENSEMBL %in% allGenes]
+  stopifnot(all(data$genome$ENSEMBL == allGenes))
+
+  data$counts <- 
+    cbind(
+        data1$counts[allGenes, ], 
+        data2$counts[allGenes, ])
+  stopifnot(all(colnames(data$counts) == data$sample$Subject_ID))
+
+  data$tpm <- 
+    cbind(
+        data1$tpm[allGenes, ], 
+        data2$tpm[allGenes, ])
+  stopifnot(all(colnames(data$tpm) == data$sample$Subject_ID))
+
+  setnames(data$sample, "Subject_ID", "ID")
+  colnames(data$tpm) <- data$sample$ID
+  colnames(data$counts) <- data$sample$ID
+
+
+  data$modelData <- data$sample[, list(Diagnosis, Age, Sex, Cohort, RIN, PMI)]
+
+
+  return(data)  
+}
+# touch()
+data <- cache(foo=foo, fname="data.RDS", verbose=TRUE)
+```
+
+Resulting data structure:
+
+```{r, include=TRUE}
+sapply(data, dim)
+```
+
+# Analysis
+
+## Outlier identification
+
+```{r outliers}
+source("../code/outliers.R")
+# touch()
+g(pca, outliers) %=% cache(foo=detectOutliers, fname="outliers.RDS", verbose=TRUE,
+  x = data$tpm %>% +1 %>% log,
+  t = params$outliers$thresholdSD,
+  nPC = params$outliers$noOfPCs)
+
+# Find outliers in each cohort separately
+sidx <- data$sample[, Cohort == "Aging"]
+g(pcaA, outliersA) %=% cache(foo=detectOutliers, fname="outliersAging.RDS", verbose=TRUE,
+  x = data$tpm[, sidx] %>% +1 %>% log,
+  t = params$outliers$thresholdSD,
+  nPC = params$outliers$noOfPCs)
+
+sidx <- data$sample[, Cohort == "PD"]
+g(pcaP, outliersP) %=% cache(foo=detectOutliers, fname="outliersPD.RDS", verbose=TRUE,
+  x = data$tpm[, sidx] %>% +1 %>% log,
+  t = params$outliers$thresholdSD,
+  nPC = params$outliers$noOfPCs)
+
+
+outliers <- c(outliersA, outliersP)
+
+```
+
+```{r outliers_plotPCAPairs, include=TRUE}
+plotPCAPairs(pca,
+  nPC = max(3, params$outliers$noOfPCs),
+  color = outliers,
+  shape = data$sample[[params$outliers$shape]]
+  )
+```
+
+```{r outliers_printSample, include=TRUE}
+data$sample[outliers] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r outliers_removeOutliers, include=TRUE, results='asis'}
+if (params$outliers$removeOutliers == TRUE) {
+  cat("> Outliers have been removed.\n\n")
+  data <- removeOutliers(data, outliers)
+
+} else {
+  cat("> Kept the outliers in the data.\n\n")
+}
+```
+
+
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Clustering before normalization 
+-->
+
+```{r, include=TRUE, results='asis'}
+if (!is.null(params$clustering)) {
+  cat("## Sample clustering\n\n")
+  cat("Hierarchical clustering using correlations as similarity measure and Ward linkage.\n\n")
+
+  foo <- function() {
+    c <- data$tpm %>% +1 %>% log %>% WGCNA::cor(use="p", nThreads = params$workers)
+    d <- as.dist(1 - c)
+    h <- hclust(d, method="ward")
+  }
+  # touch()
+  h <- cache(foo=foo, fname="clustering.RDS", verbose=FALSE)
+  l <- labels2colors(
+    data$sample[, lapply(params$clustering$groups, function(G) eval(parse(text=G)))] 
+  )
+  plotDendroAndColors(h, colors=l, groupLabels=names(params$clustering$groups))  
+}
+```
+
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Normalization
+-->
+
+
+## Normalization
+
+
+```{r}
+
+signalDensityPlot <- function(X, title, color, xlog=FALSE, subset = 10000) {
+  str <- glue("paste({paste(color, collapse=', ')}, sep='/')")
+  p <- X %>% 
+  .[ sample(nrow(.), subset), ] %>%
+  reshape2::melt() %>%
+  setnames(., c("lID", "ID", "value")) %>%
+  merge(., data$sample, by="ID") %>%
+  setDT %>% 
+  .[, Color := eval(parse(text=str))] %>%
+  ggplot(., aes(value, color=Color, group=ID)) + 
+  geom_density() + 
+  scale_color_brewer("", palette = "Set2") + 
+  theme_bw(base_size=10) + 
+  ggtitle(title)
+
+  if (xlog)
+    p <- p + scale_x_log10()
+  return(p)
+}
+
+
+# Build signal density plots
+foo <- function(color) {
+  res <- list()
+  if (!is.null(data$tpm))
+    res[[length(res) + 1]] <- signalDensityPlot(
+      data$tpm %>% + 1 %>% log, 
+      "TPM values", color=color)
+  return(res)
+}
+
+# touch()
+plotsBeforeNormalization <- cache(
+  foo=foo, 
+  fname="normalization_plots_before.RDS", 
+  verbose=TRUE,
+  color = params$normalization$plotColor)
+
+
+# Do normalization and prepare plots - after
+if (params$normalization$normalize == TRUE) {
+  source("../code/normalization.R")
+  data$tpm <- exp(quantileNormalize(log(data$tpm + 1 )))
+
+  plotsAfterNormalization <- cache(
+    foo=foo, 
+    fname="normalization_plots_after.RDS", 
+    verbose=TRUE,
+    color = params$normalization$plotColor)
+
+}
+```
+
+Signal density before normalization
+
+```{r, include=TRUE}
+n <- length(plotsBeforeNormalization)
+suppressWarnings(ggarrange(plotlist = plotsBeforeNormalization, 
+  ncol=n, labels=LETTERS[1:n], common.legend=TRUE))
+```
+
+<!-- After normalization -->
+```{r, include=TRUE, results="asis"}
+if (params$normalization$normalize == TRUE) {
+  # stop("Not implemented for RNA-seq")
+  # cat("NU and M matrices were quantile normalized separately, total 
+  #   counts and beta values were obtained from normalized matrices.\n\n")
+  cat("Signals after normalization\n\n")
+
+  n <- length(plotsAfterNormalization)
+  suppressWarnings(print(ggarrange(plotlist = plotsAfterNormalization, 
+    ncol=n, labels=LETTERS[1:n], common.legend=TRUE)))
+  
+} else {
+  cat("> No normalization performed.\n\n")
+}
+```
+
+
+## Covariates
+
+Covariates used in subsequent models
+
+```{r, include=TRUE}
+colnames(data$modelData)
+```
+
+Are any of the covariates related to the variable of interest?
+(Assuming that the first variable in modelData is the one of interest).
+
+
+```{r, include=TRUE}
+target <- colnames(data$modelData)[1]
+formula <- glue("{target} ~ .") %>% as.formula
+if (is.numeric(data$modelData[[target]])) {
+  glm(formula=formula, data = data$modelData) %>%
+    summary
+} else {
+  glm(formula=formula, data = data$modelData, family="binomial") %>%
+    summary
+}
+```
+
+```{r, include=TRUE}
+data$modelData %>% 
+  ggplot(aes(Cohort, Age, color=Sex)) + 
+  geom_boxplot() +
+  theme_bw(base_size=10)
+```
+
+# Robust lmFit
+
+
+```{r, include=TRUE, echo=TRUE}
+rnaseq <- data$tpm
+prefix <- "r1_"
+modelparams <- list(
+  variabilityQuantile = 0.1,
+  voom = TRUE,
+  downloadDataMatrix = TRUE,
+  accelerationVariable = "Diagnosis"
+  )
+```
+
+```{r, child="../code/rnaseqLmFit.Rmd"}
+```
+
+```{r}
+methylation <- as.matrix(rnaseq)
+# limit methylation matrix to ALP genes only
+probes <- fread("../etc/PD_LYS_ordered_probes.csv", header = FALSE)
+alpGenes <- probes$V1 %>% strsplit(., split = ":") %>% sapply(., `[[`, 1) %>% unique
+ensembl <- data$genome[SYMBOL %in% alpGenes, ENSEMBL]
+ensembl <- ensembl[ ensembl %in% rownames(methylation)]
+methylation <- methylation[ensembl, ]
+rm(probes, alpGenes, ensembl)
+```
+
+```{r, child="../code/ageAcceleration.Rmd"}
+```
+
+
+# SessionInfo
+
+```{r, include=TRUE}
+sessionInfo()
+```

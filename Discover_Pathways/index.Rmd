@@ -1,0 +1,30 @@
+---
+title: "Pathways"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+source("../code/pathways.R")
+```
+
+This is a dummy webpage that downloads and saves pathway annotations
+to be used in the other analyses. This is needed to preserve pathway results
+from 2019-07-01.
+
+```{r}
+pathways <- cache(foo=getMousePathways, fname="mousePathways.RDS")
+# touch()
+pathways <- cache(foo=getHumanPathways, fname="humanPathways.RDS",
+									localhost=TRUE)
+```

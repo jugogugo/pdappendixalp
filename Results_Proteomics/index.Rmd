@@ -1,0 +1,155 @@
+---
+title: "Results Proteomics"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+if (!require(weights)) {
+	install.packages("weights")
+}
+require(broom)
+require(knitr)
+source("../code/common.R")
+```
+
+```{r}
+# Load other appendix fits
+padlApx <- fread("../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+rnasApx <- fread("../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+padlPfc <- fread("../Brain_PFCRep_Padlock_withGLU/www/m6_Brain_PFCRep_Padlock_withGLU.csv")
+
+# Load the proteomics fits
+protApx <- fread("www/190319-Labrie-APP_Group1vs2_Quan.csv")
+protPfc <- fread("www/190319-Labrie-PFCX_Group1vs2_Quan.csv")
+
+
+# extract relevant data
+protApx[, Gene := Description %>% gsub("^.*GN=", "", .) %>% gsub(" PE.*$", "", .)]
+protPfc[, Gene := Description %>% gsub("^.*GN=", "", .) %>% gsub(" PE.*$", "", .)]
+protApx <- 
+  protApx[, list(
+    Accession, 
+    Gene, 
+    FC = `Abundance Ratio (log2): (2) / (1)`,
+    Q  = `Abundance Ratio Adj. P-Value: (2) / (1)`,
+    A1 = `Abundances (Normalized): F1: Sample, Group 1, 1, 1`,
+    A2 = `Abundances (Normalized): F2: Sample, Group 1, 1, 2`,
+    A3 = `Abundances (Normalized): F6: Sample, Group 1, 1, 3`,
+    A4 = `Abundances (Normalized): F3: Sample, Group 2, 2, 1`,
+    A5 = `Abundances (Normalized): F4: Sample, Group 2, 2, 2`,
+    A6 = `Abundances (Normalized): F5: Sample, Group 2, 2, 3`
+  )]
+protPfc <- 
+  protPfc[, list(
+    Accession, 
+    Gene, 
+    FC = `Abundance Ratio (log2): (2) / (1)`,
+    Q  = `Abundance Ratio Adj. P-Value: (2) / (1)`,
+    A1 = `Abundances (Normalized): F1: Sample, Group 1, 1, 1`,
+    A2 = `Abundances (Normalized): F2: Sample, Group 1, 1, 2`,
+    A3 = `Abundances (Normalized): F6: Sample, Group 1, 1, 3`,
+    A4 = `Abundances (Normalized): F3: Sample, Group 2, 2, 1`,
+    A5 = `Abundances (Normalized): F4: Sample, Group 2, 2, 2`,
+    A6 = `Abundances (Normalized): F5: Sample, Group 2, 2, 3`
+  )]
+
+# filter reliable readings
+isReliableReading <- function(gA, gB) {
+  sum(!is.na(gA)) >= 2 & sum(!is.na(gB)) >= 2
+}
+protApx[, Reliable := isReliableReading(c(A1, A2, A3), c(A4, A5, A6)), Accession]
+protPfc[, Reliable := isReliableReading(c(A1, A2, A3), c(A4, A5, A6)), Accession]
+
+genesFromALP <- padlPfc[, unique(Gene)]
+
+```
+
+# Appendix 
+
+```{r, include=TRUE, results='asis'}
+n <- protApx[, .N]
+glue("- Number of proteins investigated {n}")
+n <- protApx[Reliable == TRUE & abs(FC) > 0.2, .N]
+glue("- Number of altered proteins {n}")
+```
+
+
+```{r}
+if (!dir.exists("www")) dir.create("www")
+protApx[Reliable == TRUE & abs(FC) > 0.2] %>%
+  select(-Reliable) %>% 
+  fwrite(file = "www/protApx.csv")
+# url <- "./www/190319-Labrie-APP_Group1vs2_Quan.csv"
+url <- "./www/protApx.csv"
+stopifnot(file.exists(url))
+```
+
+- **[Additional file 9](`r url`) Quantitative proteomics analysis of the PD appendix.**
+
+
+
+# Prefrontal cortex neurons 
+
+```{r, include=TRUE, results='asis'}
+n <- protPfc[, .N]
+glue("- Number of proteins investigated {n}")
+n <- protPfc[Reliable == TRUE & abs(FC) > 0.2, .N]
+glue("- Number of altered proteins {n}")
+```
+
+- **[Additional file 10](`r url`) Quantitative proteomic analysis of the PD prefrontal cortex.**
+
+# Correlation of appendix and PFC proteome fold changes
+
+```{r, include=TRUE}
+merge(
+  protApx[, list(Gene, FC)],
+  protPfc[, list(Gene, FC)],
+  by = "Gene") %>%
+.[, cor.test(FC.x, FC.y)] %>%
+tidy() %>%
+kable %>% 
+kable_styling(bootstrap_options="hover")
+```
+
+The proteins with epigenetic disregulation in PD appendix
+
+```{r}
+dt <-
+	padlApx[, list(
+	  NoDMCs = sum(adj.P.Val < 0.05, na.rm=TRUE),
+	  NoDMCs_Hyper = sum(adj.P.Val < 0.05 & logFC > 0, na.rm=TRUE),
+	  NoDMCs_Hypo  = sum(adj.P.Val < 0.05 & logFC < 0, na.rm=TRUE)),
+	  Gene] %>%
+	merge(., protApx[Reliable == TRUE, list(Accession, Gene, FC)], by = "Gene") %>%
+	.[NoDMCs > 0 & abs(FC) > 0.2] %>%
+	merge(., protPfc[Reliable == TRUE & abs(FC) > 0.2, list(Gene, FC)], by = "Gene", all.x = TRUE) %>%
+	setnames(c("FC.x", "FC.y"), c("FC.Appendix", "FC.PFC"))
+```
+
+```{r, include=TRUE}
+dt %>%
+kable(caption="**Table S1. Fold change and percent change of ALP proteins of epigenetically dysregulated genes in the PD appendix.**") %>%
+kable_styling(bootstrap_options="hover")
+```
+
+Correlation of fold changes in the above table
+
+```{r, include=TRUE}
+dt %>%
+.[, cor.test(FC.Appendix, FC.PFC, use="p")] %>%
+tidy %>%
+kable %>%
+kable_styling(bootstrap_options="hover")
+```

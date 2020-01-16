@@ -1,0 +1,132 @@
+```{r}
+require("caret")
+require("randomForest")
+require("ggsci")
+require("ggpubr")
+
+# Make sure model params is set 
+stopifnot(is.character(modelparams$accelerationVariable))
+```
+
+### Age acceleration
+
+An age predictor is trained and evaluated using 10 fold cross-validation on all the samples. Random forest is used as training algorithm.
+
+```{r}
+set.seed(1235)
+
+ageAcceleration <- function(mydata, response, sampleKey) {
+  sidx <- 1:ncol(mydata)
+  folds <- createFolds(sidx)
+  predicted <-
+    withCluster(
+      foreach( fold = folds, .combine = rbind, .export = c("mydata", "response")) %dopar% {
+        require(dplyr)
+        require(data.table)
+        require(randomForest)
+        testset <- fold
+        trainset <- setdiff(sidx, testset)
+        model <- randomForest( t(mydata[, trainset]), response[trainset])
+        predicted <- predict(model, t(mydata[, testset]))
+        actual <- response[testset]
+        data.table(sampleKey[testset, ], P=predicted, A=actual)
+      },
+      nNodes = min(length(folds), params$workers)
+    ) 
+}
+
+# For brain select only CG sites
+if ("Type" %in% colnames(data$genome)) {
+  ids <- data$genome[Type == "CG", ID]
+  ids <- ids[ ids %in% rownames(methylation)]
+  mydata <- na.omit(methylation[ids,])
+} else {
+  mydata <- na.omit(methylation)  
+}
+
+
+response <- data$modelData$Age %>% as.numeric
+predicted <- cache(
+  foo = ageAcceleration,
+  fname = glue("{prefix}ageAcceleration.RDS"),
+  mydata = mydata,
+  response = response,
+  sampleKey = data$sample)
+rm(mydata, response)
+
+```
+
+```{r, include=TRUE}
+
+# Prediction accuracy
+p1 <- predicted[, 
+  list(
+    Actual=A, 
+    Predicted=P, 
+    Group = get(modelparams$accelerationVariable)
+  )
+] %>%
+ggplot(., aes(Actual, Predicted, color = Group)) + 
+  geom_point() +
+  geom_smooth(method = "lm") + 
+  stat_cor(method = "pearson", size = 2.7) +
+  scale_color_jco() +
+  xlab("Actual age, years") + ylab("Predicted age, years") + 
+  ggtitle("Accuracy") + 
+  theme_bw(base_size = 10) +   
+  theme(
+    legend.position="top"
+    )
+
+
+# Predictor bias
+p2 <- predicted[, 
+  list(
+    Actual=A, 
+    Predicted=P, 
+    Group = get(modelparams$accelerationVariable)
+  )
+] %>%
+  ggpaired(., 
+      cond1 = "Actual", cond2 = "Predicted",
+      color = "Group", palette = "jco",
+      line.color = "gray", line.size = 0.4) +
+    stat_compare_means(method = "t.test", paired = TRUE, size = 2.7) +
+    ylab("Age") +
+    ggtitle("Age predictor bias") +
+    facet_grid(Group~.) + 
+    theme_bw(base_size = 10) + 
+    theme(
+      legend.position="top",
+      axis.title.x = element_blank()
+      )
+
+# Age acceleration
+p3 <- predicted[, 
+  list(
+    `P-A` = P-A,
+    Group = get(modelparams$accelerationVariable)
+  )
+] %>%
+  ggplot(., aes(Group, `P-A`, color = Group)) + 
+    geom_boxplot() + 
+    geom_jitter() + 
+    stat_compare_means(method = "t.test", size = 2.7) +
+    xlab("") + 
+    ylab("Predicted - Actual") + 
+    ggtitle("Age acceleration") + 
+    scale_color_jco() + 
+    theme_bw(base_size = 10) +
+    theme(
+      legend.position="top",
+      axis.title.x = element_blank()
+      )
+
+
+ggarrange(p1, p2, p3, 
+  ncol = 3, 
+  common.legend = TRUE,
+  widths = c(3, 2, 2))
+
+```
+

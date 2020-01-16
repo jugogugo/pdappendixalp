@@ -1,0 +1,502 @@
+## Filter least variable
+
+```{r}
+v <- matrixStats::rowVars(rnaseq)
+lidx <- v >= quantile(v, modelparams$variabilityQuantile)
+rnaseq <- rnaseq[lidx, ]
+table(lidx)
+```
+
+> Removed `r sum(!lidx)` of `r length(lidx)` least variable genes
+
+## Perform VOOM
+
+```{r, include=TRUE}
+if (modelparams$voom == TRUE) {
+  message("Voom performed on given counts")
+  design <- model.matrix(
+    as.formula(params$model$formula),
+    data = data$modelData)
+
+  dgelist <- DGEList(rnaseq, group = design[,2] %>% as.factor)
+  dgelist <- calcNormFactors(dgelist, method = "TMM")
+  voomed <- voom(rnaseq, design, plot=TRUE)
+
+  # Normalized rnaseq
+  rnaseq <- t(t(voomed$E) * dgelist$sample$norm.factors)
+
+  # Also associate normalization factors with diagnosis
+  message("Relation of voom normalization factors to other covariates:")
+  lm(dgelist$samples$norm.factors ~ ., data = data$modelData) %>% summary
+} else {
+  message("No Vooming.")
+  voomed <- NULL
+}
+```
+
+## Data download
+
+```{r, include=TRUE, results="asis"}
+if (is.null(modelparams$downloadDataMatrix))
+  modelparams$downloadDataMatrix <- FALSE
+if (modelparams$downloadDataMatrix == TRUE) {
+
+  mydata <- list(
+    rnaseq = rnaseq,
+    genome = data$genome[match(rownames(rnaseq), ENSEMBL), ],
+    key = data$sample,
+    modelData = data$modelData,
+    params = params
+    )
+  fname <- glue("www/{prefix}rnaseq.RDS")
+  if (!dir.exists("www")) 
+    dir.create("www")
+  saveRDS(mydata, file = fname)
+
+  cat(paste0("> [Download processed data (.RDS)](", fname, ") file.\n\n"))
+  rm(mydata, fname)
+} else {
+  cat("> No data to download.\n\n")
+}
+
+```
+
+## Data PCs vs Covariates
+
+```{r}
+# touch()
+pca <- cache(
+  foo = prcomp, 
+  fname = glue("{prefix}pca.RDS"), 
+  verbose = TRUE, 
+  x = t(rnaseq %>% na.omit), 
+  scale=FALSE, 
+  center=TRUE)
+```
+
+Fit covariates to the PCs using limma
+
+```{r, include=TRUE}
+lmFit( t(pca$x[, 1:10]), 
+  model.matrix(~., data$modelData)) %>% eBayes %>% limma::topTable() %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The covariates significantly affecting the PCs using ANOVA:
+
+```{r, include=TRUE}
+pd <- foreach (i = 1:6, .combine=rbind) %do% {
+  myanova <- lm(pca$x[,i] ~ ., data$modelData) %>% anova
+  data.table(PC=i, Variable=rownames(myanova), P=myanova$`Pr(>F)`)
+}
+pd[Variable != "Residuals"] %>%
+ggplot(., aes(Variable, -log10(P), color=as.factor(PC))) + 
+  geom_point(size=4) +
+  geom_hline(yintercept = -log10(0.05), color = "red", linetype="dashed") + 
+  scale_color_brewer("PC", palette="Dark2") + 
+  theme_bw(base_size = 10)
+```
+
+## Select the number of SVs
+
+All known covariates are regressed from data and PCA of residuals is computed. The number of 
+PCs that explain more than 5\% of variability is used as the desired number of SVs.
+
+```{r, include=TRUE}
+selectNSV <- function(x, covariates, svrange) {
+  z <- lm(t(na.omit(x)) ~ ., data = covariates)$residuals %>% t
+  pca <- prcomp(t(z), scale=TRUE, center=TRUE)
+  ve <- pca$sdev / sum(pca$sdev)
+  sum(ve[svrange] >= 0.05)
+}
+
+if (is.null(params$model$nsv)) {
+  nsv <- selectNSV(rnaseq, data$modelData, params$model$svRange)
+  message("Selected number of SVs ", nsv)
+} else {
+  nsv <- params$model$nsv
+  message("Number of SVs specified in parameters is ", nsv)
+}
+```
+
+
+
+## Probe-level models
+
+```{r}
+dir.create("www", showWarnings = FALSE)
+```
+
+```{r}
+getLimmaFit <- function(
+  M, md, 
+  formula, formula0, contrasts, 
+  nsv, iteration, 
+  svaMethod, useVoom, useBacon) {
+  require(limma)
+  require(bacon)
+  require(data.table)
+  message(glue("Iteration {iteration}"))
+  if (iteration > 0)
+    md <- permuteModelData(md, permute = TRUE)
+
+  design <- model.matrix(
+    as.formula(formula),
+    data = md)
+  design0 <- model.matrix(
+    as.formula(formula0),
+    data = md)
+
+  # Remove colons from design matrices
+  if (any(grepl(":", colnames(design)))) {
+    colnames(design) <- make.names(colnames(design))
+    colnames(design0) <- make.names(colnames(design0))
+  }
+
+  # Add SVA 
+  if (nsv > 0) {
+    svs <- computeSVs(M, design, design0, n.sv = nsv,
+      svaMethod = svaMethod)
+    design <- cbind(design, svs)
+    design0 <- cbind(design0, svs)    
+  }
+
+  # Limma
+  if (is.null(useVoom)) {
+    fit <- lmFit(M, design, method="robust", maxit=100)
+  } else {
+    fit <- lmFit(useVoom, design, method="robust", maxit=100) 
+  }
+
+  if (!is.null(contrasts)) {
+    cont <- makeContrasts( 
+      contrasts = contrasts,
+      levels    = design
+    )
+    fit <- contrasts.fit(fit, cont) %>% eBayes 
+    testF <-  
+      limma::topTable(fit, sort.by="none", number = Inf) %>% 
+        setDT %>% 
+        .[, list(P.Value, adj.P.Val)]
+    n <- ncol(fit$coef)
+    fitres <- 
+      foreach (i = 1:n, .combine = cbind) %do% {
+        contrast <- colnames(fit$coef)[i]
+        dt <- limma::topTable(fit, coef = i, 
+          sort.by = "none", number = Inf)
+        dt <- data.table(C = dt$logFC, P = dt$P.Value)
+        setnames(dt, 
+          c("C", "P"), 
+          paste0(c("C.", "P."), contrast))
+        dt
+      } %>% 
+      data.table(ID = rownames(fit$coef), .) %>%
+      cbind(., testF  )
+
+      if (useBacon) {
+        tstat <- fit$coef/fit$stdev.unscaled/fit$sigma
+        se <- sqrt(fit$s2.post) * fit$stdev.unscaled
+        # # Peipei's method
+        # bc <- bacon(tstat)   
+        # p <- bacon::pval(bc)
+        bc <- bacon(NULL, 
+                    effectsizes = tstat, 
+                    standarderrors=se)
+        p <- bacon::topTable(meta(bc), number = nrow(tstat), adjust.method = "fdr")
+        i <- match(rownames(tstat), rownames(p))
+        p <- p[i, ]
+        stopifnot(all(rownames(tstat) == rownames(p)))
+        fitres[, P.Value := p[, "pval.org.meta"] ]
+        fitres[, adj.P.Val := p[, "pval.adj.meta"] ]
+
+        for( mycont in colnames(cont)) {
+          sourceCol <- glue("eff.size.{mycont}")
+          targetCol <- glue("C.{mycont}")
+          fitres[, targetCol] <- p[, sourceCol]
+
+          sourceCol <- glue("pval.{mycont}")
+          targetCol <- glue("P.{mycont}")
+          fitres[, targetCol] <- p[, sourceCol]
+        }
+      }
+  } else {
+    fit <- eBayes(fit)
+    coef <- which(!colnames(design) %in% colnames(design0))
+    fitres <- limma::topTable(fit, coef=coef, number=Inf, sort="none") %>% 
+      data.table(., ID = rownames(.))
+    if (useBacon) {
+      tstat <- fit$coef/fit$stdev.unscaled/fit$sigma
+      tstat_PD_Control <- tstat[, coef]
+      bc <- bacon(tstat_PD_Control)
+      p <- bacon::pval(bc)
+      fitres[, P.Value := p]
+      fitres[, adj.P.Val := p.adjust(p, "fdr")]
+    }
+  }
+  fitres
+}
+
+permutationAnalysis <- function(M, md, formula, formula0, contrasts, nsv, nPerm, svaMethod, useVoom, useBacon) {
+  export = c("getLimmaFit", 
+             "computeSVs", 
+             "permuteModelData")
+  permuted <- foreach( iteration = 0:nPerm, .combine = c, .export=export) %dopar% {
+    require(glue)
+    require(foreach)
+    require(dplyr)
+    tryCatch({
+      fit <- getLimmaFit(M, md, formula, formula0, contrasts, nsv, iteration, 
+        svaMethod, useVoom, useBacon)
+      fit[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+    }, error = function(e) {
+      return(NA)
+    })
+  }
+  permuted
+}
+
+# Initialize cluster
+nsvoptions <- sort(unique(c(0, params$model$svRange)))
+files <- c(
+  glue("{prefix}fit_limma_result.RDS"))
+if (!all(file.exists(files))) {
+  require(parallel)
+  require(doSNOW)
+  hosts <- rep("localhost", params$workers)
+  message(sprintf("Starting cluster on %s", paste(hosts, collapse=", ")))
+  mycluster <- makeCluster(hosts, type="SOCK", outfile="")    
+  registerDoSNOW(mycluster)
+  clusterSetupRNG(mycluster)  
+}
+
+
+# touch()
+fit <- cache(
+            foo       = getLimmaFit, 
+            fname     = glue("{prefix}fit_limma_result.RDS"), 
+            verbose   = TRUE, 
+            M         = rnaseq, 
+            md        = data$modelData, 
+            formula   = params$model$formula,
+            formula0  = params$model$formula0, 
+            contrasts = params$model$contrasts,
+            nsv       = nsv, 
+            iteration = 0,
+            svaMethod = "SmartSVA",
+            useVoom   = voomed,
+            useBacon  = params$model$bacon)
+
+fit[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+if (!is.null(params$model$contrasts)) {
+  for (contrast in params$model$contrasts) {
+    p <- glue("P.{contrast}")
+    q <- fit[, get(p)] %>% p.adjust("fdr")
+    message(contrast, " ",sum(q < 0.05))
+  }
+}
+
+# stop cluster
+tryCatch({
+  message("Stopping cluster.")
+  registerDoSEQ()
+  stopCluster(mycluster)  
+}, error = function(e) {})
+
+```
+
+```{r}
+# Merge with genome annotation
+fit[, ENSEMBL := ID]
+fit[, ID := NULL]
+fit <- merge(
+  fit, 
+  data$genome %>% setDT, 
+  by = "ENSEMBL", all.x = TRUE, all.y = FALSE)
+fit[, ID := NULL]
+```
+
+### P value distribution
+
+```{r, include=TRUE}
+nsig <- fit[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+ggplot(fit, aes(P.Value)) + 
+  geom_histogram(bins=50, color="black", fill="white") +
+  xlab("P value") +
+  ggtitle(glue("P value distribution at nSV={nsv}\nFDR q < 0.05 #{nsig}")) +
+  theme_bw(base_size=10)  
+```
+
+
+### Volcano plot
+
+```{r}
+getVolcanoNoContrast <- function(fit) {
+  pd <- fit[!is.na(P.Value),]
+  pd[, Color := "none"]
+  pd[adj.P.Val < 0.05 & sign(logFC) < 0, Color := "hypo"]
+  pd[adj.P.Val < 0.05 & sign(logFC) > 0, Color := "hyper"]
+  pd[, Color := factor(Color, levels = c("none", "hypo", "hyper"))]
+  p1 <-pd %>%
+    .[ sample(.N, floor(.N * 0.2)), ] %>% 
+    ggplot(., aes(logFC, -log10(P.Value), 
+                  color = Color)) + 
+    geom_point(size=1.5) + 
+    xlab("Fold change") + 
+    ylab("-log10(P)") + 
+    scale_color_manual("Direction", 
+      values = c("grey50", "#1f78b4", "#33a02c")) +
+    guides(color = FALSE) + 
+    theme_bw(base_size=10)
+  p2 <- pd %>%
+    .[ sample(.N, floor(.N * 0.2)), ] %>% 
+    ggplot(., aes(abs(AveExpr), abs(logFC), 
+                  color = Color)) + 
+    geom_point(alpha=0.4, size=1.5) + 
+    xlab("Absolute average modification") + 
+    ylab("Absolute fold change") + 
+    scale_color_manual("Direction", 
+      values = c("grey50", "#1f78b4", "#33a02c")) +
+    theme_bw(base_size=10)
+  return(list(p1, p2))
+}
+
+getVolcanoForContrasts <- function(fit) {
+  plots <- foreach(contrast = params$model$contrasts) %do% {
+    # contrast <- params$model$contrasts[1]
+    field1 <- paste0("C.", contrast)
+    field2 <- paste0("P.", contrast)
+    pd <- fit[!is.na(P.Value), list(C=get(field1), P=get(field2))]
+    pd[, Q := p.adjust(P, "fdr")]
+    pd[, Color := "none"]
+    pd[Q < 0.05 & sign(C) < 0, Color := "hypo"]
+    pd[Q < 0.05 & sign(C) > 0, Color := "hyper"]
+    pd[, Color := factor(Color, levels = c("none", "hypo", "hyper"))]
+    pd %>%
+        .[ sample(.N, floor(.N * 0.2)), ] %>% 
+        ggplot(., aes(C, -log10(P), 
+                      color = Color)) + 
+        geom_point(size=1.5) + 
+        xlab("Fold change") + 
+        ylab("-log10(P)") + 
+        scale_color_manual("Direction", 
+          values = c("grey50", "#1f78b4", "#33a02c")) +
+        ggtitle(contrast) + 
+        guides(color = FALSE) + 
+        theme_bw(base_size=10)
+  }
+  return(plots)
+}
+```
+
+```{r, include=TRUE}
+if (is.null(params$model$contrasts)) {
+  # No contrasts specified
+  myplots <- getVolcanoNoContrast(fit)
+} else {
+  # One volcano plot for all contrasts
+  myplots <- getVolcanoForContrasts(fit)
+}
+
+n <- length(myplots)
+ggarrange(plotlist=myplots, 
+  ncol=min(2, n), 
+  nrow=n %/% 2 + n %%2,
+  labels = LETTERS[1:n],
+  common.legend = TRUE)
+```
+
+
+### Manhattan plot
+
+```{r, include=TRUE, results='asis', fig.width=7.2, fig.height=7.2/2}
+if (is.null(params$model$contrasts)) {
+  # No contrasts specified
+  # touch()
+  pd <- copy(fit)
+  pd[, Gene := SYMBOL]
+  pd[, SNP := mapply(function(x, y) mean(c(x, y)), Start, End)]
+  pd[, ID := paste(Chr, SNP, sep="_")]
+  pd <- pd[!is.na(SYMBOL)]
+
+  g(p1, p2) %=% cache(
+    foo=manhattanPlot, 
+    fname=glue("{prefix}manhattan.RDS"), 
+    verbose=FALSE, 
+    fit=pd)
+
+  p1 <- p1 +  
+    theme_bw(base_size=12) +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+  p2 <- p2 + 
+    theme_bw(base_size=12) + 
+    theme( 
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    ) 
+  rm(pd)
+  print(ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1)))
+} else {
+  for(contrast in params$model$contrasts) {
+    field1 <- paste0("C.", contrast)
+    field2 <- paste0("P.", contrast)
+    pd <- copy(fit)    
+    pd[, Gene := SYMBOL]
+    pd[, SNP := mapply(function(x, y) mean(c(x, y)), Start, End)]
+    pd[, ID := paste(Chr, SNP, sep="_")]
+
+    pd <- pd[, list(
+                  Chr, 
+                  Gene, SNP, ID,
+                  logFC = get(field1), P.Value = get(field2))]
+    pd[, adj.P.Val := p.adjust(P.Value, "fdr")]
+
+    contrastName <- gsub(" ", "", contrast)
+    g(p1, p2) %=% cache(
+      foo=manhattanPlot, 
+      fname=glue("{prefix}manhattan_{contrastName}.RDS"), 
+      verbose=FALSE, 
+      fit=pd)
+    p1 <- p1 + ggtitle(contrast)
+
+    p1 <- p1 +  
+      theme_bw(base_size=12) +
+      theme( 
+        legend.position="none",
+        panel.border = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank()
+      )
+
+    p2 <- p2 + 
+      theme_bw(base_size=12) + 
+      theme( 
+        panel.border = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      ) 
+    print(ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1)))
+  }
+}
+```
+
+### Download fits
+
+```{r}
+# prepare result file
+fname <- paste0(glue("www/{prefix}"), basename(getwd()), ".csv")
+fwrite(fit, file = fname, row.names = FALSE)
+```
+
+```{r, include=TRUE, results='asis'}
+cat(paste0("[Download model fit results (.csv)](", fname, ")\n"))
+```

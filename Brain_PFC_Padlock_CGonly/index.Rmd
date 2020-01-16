@@ -1,0 +1,155 @@
+---
+title: "Brain PFC, Padlocks, CG only"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+params <- list(
+  host = system("hostname", intern=TRUE),
+  nPerm = 40,
+  workers = 40,
+  outliers = list(
+    thresholdSD = 3,
+    noOfPCs = 2,
+    removeOutliers = TRUE,
+    shape = "Group"
+  ),
+  clustering = list(
+    groups = c(Group="Group", Gender="SEX", Plate="substr(PLATE, 1, 1)"),
+    addClustersToModel = 0
+  ),
+  normalization = list(
+    normalize = FALSE,
+    plotColor = c("Group", "SEX")
+  ),
+  imputation    = list(
+    imputeBetas = FALSE,
+    imputeCounts= FALSE
+  ),
+  model = list(
+    formula = "~ Group + .",
+    formula0= "~ . - Group",
+    contrasts = NULL,
+    svRange = 1:6
+  )
+)
+```
+
+# Parameters
+
+```{r, include=TRUE}
+params %>% jsonlite::toJSON(pretty=TRUE, auto_unbox = TRUE)
+```
+
+# Data
+
+```{r}
+padlock <- function() {
+  data <- list()
+
+  # Data directory
+  d <- "../input/PD_Padlock_Appendix_PFC/"
+
+  # Sample key
+  data$sample <- fread(file.path(d, "Covar_Outliers"))
+  data$sample[24, ID := 3561]
+
+  # read the beta values
+  data$beta <- fread(file.path(d, "CXreport_Sort_30xCov_BetaValues_Target_Outliers_30na_rm0_SNP.tsv"))  
+  data$beta <- data$beta[type == "CG", ]
+
+  # Move probe annotation to genome
+  data$genome <- data$beta[, 1:6, with=FALSE] %>% 
+    .[, list(Chr = chr, SNP=loc, Type=type, Seq=seq, Str=str)] %>%
+    .[, ID := paste(Chr, SNP, sep="_")]
+  data$beta <- data$beta[, -(1:6), with=FALSE] %>%
+    as.matrix
+  rownames(data$beta) <- data$genome$ID
+
+  # read the sample counts
+  data$counts <- fread(file.path(d, "CXreport_Sort_Reads_30xCov_Target_Outliers_RepAvg_30na_rm0_SNP.tsv"))
+  data$counts[, ID := paste(chr, loc, sep="_")]
+
+  # reduce counts to the Cs present in the beta file
+  data$counts <- data$counts[ ID %in% data$genome$ID]
+  stopifnot(all(data$genome$ID == data$counts$ID))
+  data$counts[, ID := NULL]
+  data$counts <- data$counts[, -(1:6), with=FALSE] %>% as.matrix 
+  rownames(data$counts) <- data$genome$ID
+
+  # Fix sample names 
+  colnames(data$counts) <- gsub("PFC_.*_CON", "", colnames(data$counts))
+  colnames(data$counts) <- gsub("PFC_.*_PD", "", colnames(data$counts))
+  colnames(data$counts) <- gsub("_", "", colnames(data$counts))
+  stopifnot(all(colnames(data$counts) == data$sample$ID))
+
+  colnames(data$beta) <- gsub("PFC_.*_CON", "", colnames(data$beta))
+  colnames(data$beta) <- gsub("PFC_.*_PD", "", colnames(data$beta))
+  colnames(data$beta) <- gsub("_", "", colnames(data$beta))
+  stopifnot(all(colnames(data$beta) == data$sample$ID))
+
+  # Now match loci
+  stopifnot(all(data$genome$ID == rownames(data$beta)))  
+  stopifnot(all(data$genome$ID == rownames(data$counts)))  
+
+  # For consistency with older data
+  data$modelData <- data$sample[, 
+    list(Group = Group %>% as.factor %>% relevel("CTRL"), 
+      Age=AGE, Gender=SEX, PMI
+    )]
+
+  return(data)
+}
+
+# touch()
+data <- cache(foo=padlock, fname="data.RDS", verbose=TRUE)
+```
+
+Resulting data structure:
+
+```{r, include=TRUE}
+sapply(data, dim)
+```
+
+<!-- Run the processing pipeline -->
+```{r, child="../code/padlockPipeline.Rmd"}
+```
+
+
+
+# Robust lmFit
+
+50% stable, non extreme change, M values, robust limma eBayes
+
+```{r, include=TRUE, echo=TRUE}
+methylation <- data$beta
+prefix <- "m6_"
+modelparams <- list(
+    allowStable = 0.5,
+    imputeBetas = FALSE,
+    useMvalues  = TRUE,
+    fixInfinity = 0.0005, # Fraction of change for 0% and 100% methylated locations
+    downloadDataMatrix = TRUE
+  )
+```
+
+
+```{r, child="../code/padlockLmFit_2.Rmd"}
+```
+
+# SessionInfo
+
+```{r, include=TRUE}
+sessionInfo()
+```

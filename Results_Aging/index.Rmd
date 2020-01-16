@@ -1,0 +1,693 @@
+---
+title: "Results Aging"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+require(broom)
+require(knitr)
+require(RobustRankAggreg)
+require(cowplot)
+source("../code/common.R")
+source("../code/pformat.R")
+source("../code/genomicEnrichment.R")
+annotations <- cache(foo=loadHumanAnnotations,
+                     fname = "annotations.RDS")
+pathways <- readRDS("../Discover_Pathways/humanPathways.RDS")
+```
+
+# Appendix, padlocks
+
+```{r}
+apax <- fread("../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv")
+apad <- readRDS("../Appendix_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+```
+
+```{r, include=TRUE, results='asis'}
+n <- nrow(apax)
+glue("- Number of loci {n}")
+t <- apad$key[, table(Diagnosis)]
+glue("- Number of PD cases: {t[2]} and controls: {t[1]}")
+n <- apax[, sum(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, na.rm=TRUE)]
+glue("- Number of significant loci {n}")
+n <- apax[p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, length(unique(Gene))]
+glue("- Number of genes affected {n}")
+r <- apad$key[Diagnosis == "Control", range(Age) %>% paste(collapse=":")]
+glue("- Age range of healthy controls {r}")
+```
+
+
+Dominant direction of methylation
+
+```{r, include=TRUE}
+t <-
+	apax[, list(
+						Significant = ifelse(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, "Significant", "NS"), 
+					 	Direction = ifelse(C.DiagnosisControl.Age < 0, "Hypo-M", "Hyper-M")
+					 )] %>%
+	.[, table(Significant, Direction)] %>%
+	.[c("NS", "Significant"), c("Hypo-M", "Hyper-M")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+tidy() %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+
+```{r}
+# touch()
+foo <- function(analysis, prefix, annotations, t) {
+  fits <- fread(glue("../{analysis}/www/{prefix}_{analysis}.csv"))
+  ccol <- glue("C.DiagnosisControl.Age")
+  pcol <- glue("P.DiagnosisControl.Age")
+  fits <- fits[, list(ID, Chr, SNP, Str, 
+                  adj.P.Val = p.adjust(get(pcol), "fdr"),
+                  logFC = get(ccol)
+                  )]
+  dt1 <- getAnnotatrEnrichments(fits, annotations, qThresh = t)
+  dt2 <- getAppendixChipEnrichments(fits, qThresh = t)
+  dt3 <- getEpiRoadmapEnrichment(fits, qThresh = t)
+  dt4 <- getPsychEncodeEnrichments(fits, qThresh = t)
+  return(list(dt1, dt2, dt3, dt4))
+}
+
+# touch()
+analysis <- "Appendix_AgeAcceleration_Padlock"
+prefix <- "m6"
+t <- 0.05
+
+dtlist <- cache(
+  foo = foo, fname = glue("enrichment_{analysis}.RDS"), verbose = TRUE,
+  analysis = analysis, prefix= prefix, annotations = annotations,
+  t = t
+  )
+```
+
+
+General annotation of genomic elements:
+
+```{r, include=TRUE}
+dtlist[[1]] %>%
+.[Type == "All"] %>%
+.[, `P < 0.05` := texPstars(`P < 0.05`)] %>%
+dplyr::select(estimate=OR, 
+       p.value=P, 
+       conf.low=Lo, 
+       conf.high=Hi, 
+       category=Category, 
+       p_stars = `P < 0.05`) %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+Genomic elements obtained from ChIP-seq:
+
+```{r, include=TRUE}
+dtlist[[2]] %>%
+.[, `P < 0.05` := texPstars(`P < 0.05`)] %>%
+dplyr::select(estimate=OR, 
+       p.value=P, 
+       conf.low=Lo, 
+       conf.high=Hi, 
+       category=Category, 
+       type=Type,
+       p_stars = `P < 0.05`) %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+```{r}
+myplots <- plotAnnotatrEnrichment(dtlist[[1]])
+myplots[[1]] <- myplots[[1]] + facet_grid(Type~.)
+myplots[[2]] <- myplots[[2]] + facet_grid(Type~.)
+
+myplots[[3]] <- plotAppendixChipEnrichment(dtlist[[2]], wrap = "vertical")
+myplots[[4]] <- plotEpiRoadmapEnrichment(  dtlist[[3]], wrap = "vertical")
+```
+
+```{r, include=TRUE, fig.cap="**Figure S7. Genomic elements enriched with differentially methylated cytosines in the healthy aging appendix.**"}
+ggarrange(myplots[[1]], myplots[[2]], myplots[[3]],
+  ncol = 3, nrow = 1, labels = LETTERS[1:3],
+  widths = c(4, 7, 3),
+  common.legend = TRUE)
+```
+
+
+```{r}
+url <- "../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv"
+stopifnot(file.exists(url))
+```
+
+
+
+- **[Additional file 11](`r url`) DNA methylation changes in the aging appendix of healthy individuals and PD patients.**
+
+
+# Appendix, RNA-seq
+
+```{r}
+apar <- fread("../Appendix_AgeAcceleration_RNAseq/www/r1_Appendix_AgeAcceleration_RNAseq.csv")
+apard <- readRDS("../Appendix_AgeAcceleration_RNAseq/www/r1_rnaseq.RDS")
+```
+
+```{r, include=TRUE, results='asis'}
+n <- nrow(apar)
+glue("- Number of transcripts {n}")
+t <- apard$key[, table(Diagnosis)]
+glue("- Number of PD cases: {t[2]} and controls: {t[1]}")
+n <- apar[, sum(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, na.rm=TRUE)]
+glue("- Number of significant transcripts {n}")
+```
+
+
+Dominant direction of transcription change:
+
+```{r, include=TRUE}
+t <-
+	apar[, list(
+						Significant = ifelse(p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05, "Significant", "NS"), 
+					 	Direction = ifelse(C.DiagnosisControl.Age < 0, "Down", "Up")
+					 )] %>%
+	.[, table(Significant, Direction)] %>%
+	.[c("NS", "Significant"), c("Down", "Up")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+broom::tidy() %>%
+knitr::kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+# Prefrontal cortex neurons, padlock
+
+```{r}
+pfcax <- fread("../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv")
+pfcad <- readRDS("../Brain_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+```
+
+```{r, include=TRUE, results='asis'}
+n <- nrow(pfcax[Type == "CG"])
+glue("- Number of CpG loci {n}")
+n <- nrow(pfcax[Type != "CG"])
+glue("- Number of CpH loci {n}")
+t <- pfcad$key[, table(Group)]
+glue("- Number of PD cases: {t[2]} and controls: {t[1]}")
+n <- pfcax[, sum(p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, na.rm=TRUE)]
+glue("- Number of significant loci {n}")
+n <- pfcax[p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, length(unique(Gene))]
+glue("- Number of genes affected {n}")
+```
+
+Dominant direction of methylation
+
+```{r, include=TRUE}
+t <-
+	pfcax[, list(
+						Significant = ifelse(p.adjust(P.GroupCTRL.Age, "fdr") < 0.05, "Significant", "NS"), 
+					 	Direction = ifelse(C.GroupCTRL.Age < 0, "Hypo-M", "Hyper-M")
+					 )] %>%
+	.[, table(Significant, Direction)] %>%
+	.[c("NS", "Significant"), c("Hypo-M", "Hyper-M")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+tidy() %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+```{r}
+url <- "../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv"
+stopifnot(file.exists(url))
+```
+
+- **[Additional file 12](`r url`) DNA methylation changes in aging prefrontal cortex neurons of healthy individuals and PD patients.**
+
+
+# Enrichment of ALP pathways in the epigenome
+
+```{r}
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  colP  <- "P.DiagnosisControl.Age"
+  colFC <- "C.DiagnosisControl.Age"
+  dt <- apax[, 
+          list(
+            Q = get(colP) %>% p.adjust("fdr"),
+            FC= get(colFC),
+            Gene)]
+  res1 <- 
+        dt[, table(Q < 0.05, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "All"]
+  res1up <- 
+        dt[, table(Q < 0.05 & sign(FC) > 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hyper-"]
+  res1down <- 
+        dt[, table(Q < 0.05 & sign(FC) < 0, Gene %in% genes)] %>%
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Appendix"] %>%
+          .[, Dir  := "Hypo-"]
+
+  colP  <- "P.GroupCTRL.Age"
+  colFC <- "C.GroupCTRL.Age"
+  dt <- pfcax[, 
+          list(
+            Q = get(colP) %>% p.adjust("fdr"),
+            FC= get(colFC),
+            Gene)]
+  res2 <- 
+        dt[, table( Q < 0.05, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "All"]
+  res2up <- 
+        dt[, table( Q < 0.05 & sign(FC) > 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "Hyper-"]
+
+  res2down <- 
+        dt[, table( Q < 0.05 & sign(FC) < 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "PFC"] %>%
+          .[, Dir  := "Hypo-"]
+
+  rbindlist(list(res1, res1up, res1down, res2, res2up, res2down))
+}
+if (!dir.exists("www")) dir.create("www")
+fwrite(pd, file = "www/enrichment_Pathways_DMCs.csv")
+
+```
+
+```{r, include=TRUE}
+pd %>%
+.[, `P < 0.05` := gtools::stars.pval(p.value)] %>% 
+.[order(Type, Dir), ] %>%
+.[, list(estimate, p.value, conf.low, conf.high, Type,
+				 term = sprintf("%s (%s)", Name, Term),
+				 direction = Dir, 
+				 p_stars = texPstars(`P < 0.05`))] %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+```{r, include=TRUE, fig.cap="**Figure S8. ALP pathway changes in DNA methylation in the healthy aging appendix and prefrontal cortex neurons.**"}
+ggplot(pd, aes(Name, log(estimate), color = p.value < 0.05)) +
+  geom_point(size = 4) + 
+  geom_errorbar(aes(ymin = log(conf.low), ymax = log(conf.high)), width = 0.25, size = 0.25, color = "black") +
+  geom_hline(yintercept = 0) + 
+  ylab("OR, log") +
+  scale_color_brewer("P < 0.05", palette="Dark2") +
+  facet_grid(Type ~ Dir) + 
+  theme_bw(base_size = 14) + 
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 55, hjust = 1),
+        legend.position = "top") 
+```
+
+
+Correlation of odds ratios in PFC and appendix
+
+```{r, include=TRUE}
+pd[Dir == "Hyper-", list(Name, Type, estimate)] %>%
+dcast(Name ~ Type, value.var = 'estimate') %>%
+.[, cor.test(Appendix, PFC)] %>%
+tidy() %>%
+kable %>% 
+kable_styling(bootstrap_options="hover")
+```
+
+# Aging hallmarks
+
+```{r}
+computeORs <- function(dt) {
+	require(doParallel)
+	registerDoParallel(cores = parallel::detectCores())
+  dt <- 
+    foreach (gene = unique(dt$Gene), .combine = rbind) %dopar% {
+      require(data.table)
+      tryCatch({
+        t <- dt[, table(Gene == gene, Significant == TRUE)]
+        f <- fisher.test(t, alternative = "greater")
+        data.table(OR = f$estimate, P = f$p.value, Gene = gene)    
+      }, error = function(e) {
+        message(e)
+        data.table(OR = NA, P = NA, Gene = gene)
+      })
+    }
+  dt
+}
+
+epfc <- cache(foo=computeORs, fname="epfc.RDS",
+              dt = pfcax[, list(Gene, Significant = p.adjust(P.GroupCTRL.Age, "fdr") < 0.05)])
+eapx  <- cache(foo=computeORs, fname="eapx.RDS",
+               dt = apax[, list(Gene, Significant = p.adjust(P.DiagnosisControl.Age, "fdr") < 0.05)])
+hallmarks <- aggregateRanks(
+  list(
+    epfc[order(P), Gene],
+    eapx[order(P), Gene]
+  )
+)  
+setDT(hallmarks)
+setnames(hallmarks, "Name", "Gene")
+hallmarks <- 
+merge(hallmarks, epfc[, list(Gene, PFC.OR=OR, PFC.P=P)], by = "Gene") %>% 
+		merge(., eapx[, list(Gene, APX.OR=OR, APX.P=P)], by = "Gene")
+
+if (!dir.exists("www")) dir.create("www")
+write.table(hallmarks[order(Score)], file = "www/Aging_Hallmarks.csv", sep = ",", row.names = FALSE)
+
+```
+
+```{r, include=TRUE}
+hallmarks[order(Score)][1:15] %>%
+kable %>%
+kable_styling(bootstrap_options="hover")
+```
+
+```{r}
+url <- "./www/Aging_Hallmarks.csv"
+stopifnot(file.exists(url))
+```
+
+- **[Additional file 13](`r url`) ALP genes consistently epigenetically altered with aging in the healthy appendix and healthy prefrontal cortex neurons.**
+
+
+# Aging in PD and control individuals
+
+```{r}
+computeTrends <- function(X, fit, colP, colFC, age, group) {
+  n <- nrow(X)
+  ids <- fit[ get(colFC) > 0][order(get(colP)), ID][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ID %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- data.table(Dir = "Hyper-M", Age = age, 
+    Trend = trend, Group = group)
+
+  ids <- fit[ get(colFC) < 0][order(get(colP)), ID][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ID %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- rbind(pd, data.table(Dir = "Hypo-M", Age = age, 
+    Trend = trend, Group = group))
+  pd
+}
+
+# Appendix
+apxdata <- readRDS("../Appendix_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+path <- "../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv"
+apxfit <- fread(path)
+
+# restrict the data here
+agerange <- apxdata$modelData[Diagnosis == "PD/LBD", range(Age)]
+sidx <- apxdata$modelData[, Age >= agerange[1] & Age <= agerange[2] ]
+apxdata <- shrinkList(apxdata, sidx, nrow(apxdata$modelData))
+
+X <- lm( t(apxdata$methylation %>% na.omit) ~ ., 
+  data = apxdata$modelData %>% select(-Age))$residuals %>% t
+pd <- computeTrends(X, apxfit,
+                    colP  = "P.DiagnosisControl.Age",
+                    colFC = "C.DiagnosisControl.Age",
+                    age   = apxdata$modelData$Age,
+                    group = apxdata$modelData$Diagnosis) %>%
+  .[, Type := "Appendix"] %>% 
+  .[, Group := factor(Group, levels = c("Control", "PD/LBD"), labels = c("Control", "PD"))]
+
+
+# PFC 
+pfcdata <- readRDS("../Brain_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+path <- "../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv"
+pfcfit <- fread(path)
+
+# restrict the data
+agerange <- pfcdata$modelData[Group == "PD", range(Age)]
+sidx <- pfcdata$modelData[, Age >= agerange[1] & Age <= agerange[2] ]
+pfcdata <- shrinkList(pfcdata, sidx, nrow(pfcdata$modelData))
+
+
+
+X <- lm( t(pfcdata$methylation %>% na.omit) ~ ., 
+  data = pfcdata$modelData %>% select(-Age))$residuals %>% t
+pd2 <- computeTrends(X, pfcfit,
+                    colP  = "P.GroupCTRL.Age",
+                    colFC = "C.GroupCTRL.Age",
+                    age   = pfcdata$modelData$Age,
+                    group = pfcdata$modelData$Group) %>%
+  .[, Type := "PFC"] %>%
+  .[, Group := factor(Group, levels = c("CTRL", "PD"), labels = c("Control", "PD"))]
+
+
+pd <- rbind(pd, pd2)
+textLayer <-
+            pd[, cor.test(Age, Trend) %>% tidy, list(Group, Type, Dir)] %>%
+            select(Group, Type, Dir, estimate, p.value) %>%
+            setDT() %>%
+            .[, label := 
+                  sprintf("r = $%s$, p %s %s", 
+                          format(estimate, digits=1), 
+                          ifelse(p.value == 0, "<", "="),
+                          texP(p.value)
+                         )
+            ] %>% 
+            .[, Age := 20] %>% 
+            .[, Trend := ifelse(Group == "Control", 0.9, 0.7)]
+apxdata$modelData[, table(Diagnosis)]
+pfcdata$modelData[, table(Group)]
+```
+
+
+```{r, include=TRUE, fig.cap="**Figure S9. Epigenetic aging of ALP genes in the appendix and prefrontal cortex neurons of age-matched healthy controls and PD cases.** "}
+pd %>%
+ggplot(., aes(Age, Trend, color = Group)) + 
+  geom_point(size = 0.5, alpha = 0.3, aes(shape = Group, fill = Group)) + 
+  geom_smooth(method = 'lm', size = 0.5, se = FALSE) + 
+  geom_text(data = textLayer, aes(label = TeX(label, output="character")), 
+    parse = TRUE, show.legend = FALSE,
+    hjust=0) +
+  ylab("Mean normalized methylation") + 
+  facet_grid(Type ~ Dir, scales = "free_x") + 
+  scale_shape_manual(values = c(16, 17)) +
+  scale_color_manual(values = c("black", "#e31a1c")) +
+  scale_fill_manual(values = c("black", "#e31a1c")) +
+  scale_y_continuous(limits = c(-0.8, 1)) + 
+  theme_bw(base_size = 14)
+```
+
+```{r}
+
+# Aging vs PD effects in appendix RNAseq
+alpGenes <- apax[, unique(Gene)]
+path <- "../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv"
+apxpdfit <- fread(path)
+apxpdfit <- apxpdfit[SYMBOL %in% alpGenes]
+
+path <- "../Appendix_AgeAcceleration_RNAseq/www/r1_Appendix_AgeAcceleration_RNAseq.csv"
+apxafit <- fread(path)
+apxafit <- apxafit[SYMBOL %in% alpGenes]
+
+pd <- merge(
+            apxafit[, list(
+                        SYMBOL, 
+                        C = C.DiagnosisControl.Age, 
+                        P=P.DiagnosisControl.Age, 
+                        Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+            apxpdfit[, list(SYMBOL, logFC, P.Value, adj.P.Val)],
+            by = "SYMBOL"
+          ) %>%
+  .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, list(
+          AgingEffect = abs(C), 
+          PDEffect = abs(logFC),
+          Type = "Appendix"
+          )
+  ]
+
+
+pA <- 
+  pd %>%
+  ggplot(., aes(AgingEffect, PDEffect)) + 
+    geom_point(shape = 1, color = "grey") +
+    geom_smooth(method = "lm", color = "black") + 
+    stat_cor(method = "pearson") +
+    scale_x_continuous(
+      labels = scales::number_format(accuracy = 0.01)) + 
+    xlab("Absolute aging effect") + 
+    ylab("Absolute PD effect") +
+    theme_bw(base_size = 14)
+
+
+
+# Normalized aging trend
+computeTrends <- function(X, fit, colP, colFC, age, group) {
+  n <- nrow(X)
+  ids <- fit[ get(colFC) > 0][order(get(colP)), ENSEMBL][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ENSEMBL %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- data.table(Dir = "Up-regulation", Age = age, 
+    Trend = trend, Group = group)
+
+  ids <- fit[ get(colFC) < 0][order(get(colP)), ENSEMBL][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ENSEMBL %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- rbind(pd, data.table(Dir = "Down-regulation", Age = age, 
+    Trend = trend, Group = group))
+  pd
+}
+
+# Appendix
+
+apxdata <- readRDS("../Appendix_AgeAcceleration_RNAseq/www/r1_rnaseq.RDS")
+X <- lm( t(apxdata$rnaseq %>% na.omit) ~ ., 
+  data = apxdata$modelData %>% select(-Age))$residuals %>% t
+
+pd <- computeTrends(X, apxafit,
+                    colP  = "P.DiagnosisControl.Age",
+                    colFC = "C.DiagnosisControl.Age",
+                    age   = apxdata$modelData$Age,
+                    group = apxdata$modelData$Diagnosis) %>%
+  .[, Type := "Appendix"] %>% 
+  .[, Group := factor(Group, levels = c("Control", "PD/LBD"))]
+
+
+textLayer <-
+            pd[, cor.test(Age, Trend) %>% broom::tidy(), list(Group, Type, Dir)] %>%
+            select(Group, Type, Dir, estimate, p.value) %>%
+            setDT() %>%
+            .[, label := 
+                  sprintf("r = $%s$, p %s %s", 
+                          format(estimate, digits=1), 
+                          ifelse(p.value == 0, "<", "="),
+                          texP(p.value)
+                         )
+            ] %>% 
+            .[, Age := 20] %>% 
+            .[, Trend := ifelse(Group == "Control", 0.2, 0.17)]
+
+
+
+pB <- 
+  pd %>%
+  ggplot(., aes(Age, Trend, color = Group)) + 
+    geom_point(alpha = 0.3, aes(shape = Group, fill = Group)) + 
+    geom_smooth(method = 'lm', se = FALSE) + 
+    geom_text(data = textLayer, aes(label = TeX(label, output="character")), 
+      parse = TRUE, 
+      hjust=0) +
+    ylab("Mean normalized methylation") + 
+    facet_grid(Type ~ Dir, scales = "free") + 
+    scale_shape_manual(values = c(16, 17)) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    scale_fill_manual(values = c("black", "#e31a1c")) +
+    # scale_y_continuous(limits = c(-0.8, 1)) + 
+    theme_bw(base_size = 14)
+
+
+# Age deceleration
+predicted <- readRDS("../Appendix_AgeAcceleration_RNAseq/r1_ageAcceleration.RDS")
+pC <- predicted[, 
+  list(
+    `P-A` = P-A,
+    Group = Diagnosis
+  )
+] %>%
+.[, Group := factor(Group, 
+                levels = c("Control", "PD/LBD"), 
+                labels = c("Control", "PD"))] %>%
+  ggplot(., aes(Group, `P-A`, color = Group)) + 
+    geom_boxplot(outlier.size = 0) + 
+    geom_jitter(size = 0.5, shape = 1, alpha = 0.3) + 
+    stat_compare_means(method = "t.test", 
+      aes(label = paste0("p = ", ..p.format..))) +
+    xlab("Group") + 
+    ylab("Predicted - Actual Age, years") + 
+    theme_bw(base_size = 14) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    theme(
+      legend.position="top"
+      )
+```
+
+```{r, include=TRUE, fig.cap="**Figure S10. Aging patterns of ALP gene transcripts in the healthy and PD appendix.**"}
+
+legendGroup <- get_legend(pC)
+ggdraw() +
+  # draw_plot(
+  #   pA,
+  #   x = 0, y = 0, width = 0.25, height = 1) +
+  draw_plot(pB + theme(legend.position = "none"),
+    x = 0.0, y = 0, width = 0.8, height = 1) +
+  draw_plot(pC + guides(color=FALSE, shape=FALSE) + 
+    theme(legend.position = "top"),
+    x = 0.8, y = 0, width = 0.2, height = 1) +
+  draw_plot_label(
+    label = LETTERS[1:2],
+    size = 10,
+    x = c(0, 0.8),
+    y = c(1, 1))
+
+```
+
+

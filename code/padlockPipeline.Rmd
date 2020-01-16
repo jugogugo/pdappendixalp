@@ -1,0 +1,265 @@
+
+# Analysis
+
+## Outlier identification
+
+```{r outliers}
+source("../code/outliers.R")
+# touch()
+g(pca, outliers) %=% cache(foo=detectOutliers, fname="outliers.RDS", verbose=TRUE,
+  x = data$beta,
+  t = params$outliers$thresholdSD,
+  nPC = params$outliers$noOfPCs)
+
+# An exception for multibatched datasets
+exp <- params$outliers$perCohort
+if (!is.null(exp) && exp == TRUE) {
+	res <- 
+		foreach( cohort = unique(data$sample$Cohort)) %do% {
+			sidx <- data$sample[, Cohort == cohort]
+			fname <- glue("outliers_{cohort}.RDS")
+			g(pca0, outliers0) %=% cache(foo=detectOutliers, fname=fname, verbose=TRUE,
+			  x = data$beta[, sidx],
+			  t = params$outliers$thresholdSD,
+			  nPC = params$outliers$noOfPCs)
+			outliers[sidx] <- outliers0
+			outliers
+		}
+	outliers <- res[[1]] | res[[2]] 
+}
+```
+
+```{r outliers_plotPCAPairs, include=TRUE}
+plotPCAPairs(pca,
+  nPC = max(3, params$outliers$noOfPCs),
+  color = outliers,
+  shape = data$sample[[params$outliers$shape]]
+  )
+```
+
+```{r outliers_printSample, include=TRUE}
+data$sample[outliers] %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r outliers_removeOutliers, include=TRUE, results='asis'}
+if (params$outliers$removeOutliers == TRUE) {
+  cat("> Outliers have been removed.\n\n")
+  data <- removeOutliers(data, outliers)
+
+} else {
+  cat("> Kept the outliers in the data.\n\n")
+}
+```
+
+
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Clustering before normalization 
+-->
+
+```{r, include=TRUE, results='asis'}
+if (!is.null(params$clustering)) {
+  cat("## Sample clustering\n\n")
+  cat("Hierarchical clustering using correlations as similarity measure and Ward linkage.\n\n")
+
+  foo <- function() {
+    c <- data$beta %>% WGCNA::cor(use="p", nThreads = params$workers)
+    d <- as.dist(1 - c)
+    h <- hclust(d, method="ward")
+  }
+  # touch()
+  h <- cache(foo=foo, fname="clustering.RDS", verbose=FALSE)
+  l <- labels2colors(
+    data$sample[, lapply(params$clustering$groups, function(G) eval(parse(text=G)))] 
+  )
+  plotDendroAndColors(h, colors=l, groupLabels=names(params$clustering$groups))  
+}
+```
+
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Normalization
+-->
+
+
+## Normalization
+
+
+```{r}
+quantileNormalize <- function( x ) {
+  # Normalizes raw intensity signals using 
+  # quantile normalization procedure
+  # INPUT
+  # x - a matrix of raw intensities
+  # OUTPUT
+  # a matrix of quantile normalized intensities
+  nloci <- dim(x)[1]
+  nsamp <- dim(x)[2]
+
+  xi <- matrix(nrow=nloci,ncol=nsamp)
+  xq <- matrix(nrow=nloci,ncol=nsamp)
+
+
+  for ( i in 1:nsamp) xi[,i] <- rank( x[,i], ties.method="first")
+  cat("1\n")
+
+  for ( i in 1:nsamp) xq[,i] <- sort( x[,i], na.last=TRUE )
+  cat("2\n")
+
+  m <- matrixStats::rowMedians( xq )
+  cat("3\n")
+
+  for ( i in 1:nsamp) xq[,i] <- m[  xi[,i] ] 
+  cat("4\n")
+  colnames(xq) <- colnames(x)
+  rownames(xq) <- rownames(x)
+  return(xq)
+}
+
+signalDensityPlot <- function(X, title, color, xlog=FALSE, subset = 10000) {
+  str <- glue("paste({paste(color, collapse=', ')}, sep='/')")
+  p <- X %>% 
+  .[ sample(nrow(.), subset), ] %>%
+  reshape2::melt() %>%
+  setnames(., c("lID", "ID", "value")) %>%
+  merge(., data$sample, by="ID") %>%
+  setDT %>% 
+  .[, Color := eval(parse(text=str))] %>%
+  ggplot(., aes(value, color=Color, group=ID)) + 
+  geom_density() + 
+  scale_color_brewer("", palette = "Set2") + 
+  theme_bw(base_size=10) + 
+  ggtitle(title)
+
+  if (xlog)
+    p <- p + scale_x_log10()
+  return(p)
+}
+
+# Normalize CH separately from CG
+
+quantileNormalizePadlocks <- function(dataObj) {
+  if (is.null(dataObj$countsU) | is.null(dataObj$countsM)) {
+    stop("Normalization not implemented without U and M counts.")
+  }
+  if (any(c("CHG", "CHH") %in% dataObj$genome[, unique(Type)])) {
+    # Normalize separately each type
+    lidx <- dataObj$genome[, Type == "CG"]
+    dataObj$countsU[lidx, ] <- quantileNormalize(dataObj$countsU[lidx, ]) %>% round
+    dataObj$countsM[lidx, ] <- quantileNormalize(dataObj$countsM[lidx, ]) %>% round
+    lidx <- !lidx
+    dataObj$countsU[lidx, ] <- quantileNormalize(dataObj$countsU[lidx, ]) %>% round
+    dataObj$countsM[lidx, ] <- quantileNormalize(dataObj$countsM[lidx, ]) %>% round
+  } else {
+    dataObj$countsU         <- quantileNormalize(dataObj$countsU) %>% round
+    dataObj$countsM         <- quantileNormalize(dataObj$countsM) %>% round
+  }
+  dataObj$counts <- dataObj$countsU + dataObj$countsM
+  dataObj$beta   <- dataObj$countsM / (dataObj$counts)    
+  return(dataObj)
+}
+
+# Build signal density plots
+foo <- function(color) {
+  res <- list()
+  if (!is.null(data$beta))
+    res[[length(res) + 1]] <- signalDensityPlot(data$beta, "Beta values", color=color)
+  if (!is.null(data$countsU))
+    res[[length(res) + 1]] <- signalDensityPlot(data$countsU, "Coverage U", xlog=TRUE, color=color)
+  if (!is.null(data$countsM))
+    res[[length(res) + 1]] <- signalDensityPlot(data$countsM, "Coverage M", xlog=TRUE, color=color)
+  if (!is.null(data$counts))
+    res[[length(res) + 1]] <- signalDensityPlot(data$counts, "Total Coverage", xlog=TRUE, color=color)
+  return(res)
+}
+
+# touch()
+plotsBeforeNormalization <- cache(
+  foo=foo, 
+  fname="normalization_plots_before.RDS", 
+  verbose=TRUE,
+  color = params$normalization$plotColor)
+
+
+# Do normalization and prepare plots - after
+if (params$normalization$normalize == TRUE) {
+  # touch()
+  data <- cache(
+    foo=quantileNormalizePadlocks, 
+    fname="data_qntl.RDS",
+    verbose=TRUE,
+    dataObj=data, 
+    )
+  # touch()
+  plotsAfterNormalization <- cache(
+    foo=foo, 
+    fname="normalization_plots_after.RDS", 
+    verbose=TRUE,
+    color = params$normalization$plotColor)
+  # touch()
+  g(pca, outliers) %=% cache(foo=detectOutliers, fname="outliers_qntl.RDS", verbose=TRUE,
+    x = data$beta,
+    t = params$outliers$thresholdSD,
+    nPC = params$outliers$noOfPCs)    
+}
+```
+
+Signal density before normalization
+
+```{r, include=TRUE}
+n <- length(plotsBeforeNormalization)
+suppressWarnings(ggarrange(plotlist = plotsBeforeNormalization, 
+  ncol=n, labels=LETTERS[1:n], common.legend=TRUE))
+```
+
+<!-- After normalization -->
+```{r, include=TRUE, results="asis"}
+if (params$normalization$normalize == TRUE) {
+  cat("U and M matrices were quantile normalized separately, total 
+    counts and beta values were obtained from normalized matrices.\n\n")
+  cat("Signals after normalization\n\n")
+
+  n <- length(plotsAfterNormalization)
+  suppressWarnings(print(ggarrange(plotlist = plotsAfterNormalization, 
+    ncol=n, labels=LETTERS[1:n], common.legend=TRUE)))
+
+  cat("PCA and outliers after normalization\n\n")
+  plotPCAPairs(pca,
+    nPC = max(3, params$outliers$noOfPCs),
+    color = outliers,
+    shape = data$sample[[params$outliers$shape]]
+    )
+  
+} else {
+  cat("> No normalization performed.\n\n")
+}
+```
+
+
+## Covariates
+
+Covariates used in subsequent models
+
+```{r, include=TRUE}
+colnames(data$modelData)
+```
+
+Are any of the covariates related to the variable of interest?
+(Assuming that the first variable in modelData is the one of interest).
+
+
+```{r, include=TRUE}
+target <- colnames(data$modelData)[1]
+formula <- glue("{target} ~ .") %>% as.formula
+if (is.numeric(data$modelData[[target]])) {
+  glm(formula=formula, data = data$modelData) %>%
+    summary
+} else {
+  glm(formula=formula, data = data$modelData, family="binomial") %>%
+    summary
+}
+```
+
+

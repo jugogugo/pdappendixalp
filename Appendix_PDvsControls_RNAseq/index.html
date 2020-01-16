@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+
+
+
+<title>Appendix PD vs Controls, RNA-seq</title>
+
+<link href='../libs/fluidbox/css/fluidbox.css' rel='stylesheet' type='text/css'>
+<link href='https://fonts.googleapis.com/css?family=Source+Code+Pro' rel='stylesheet' type='text/css'>
+<link href='../include/css/style.css' rel='stylesheet' type='text/css'>
+
+<style type="text/css">code{white-space: pre;}</style>
+<style type="text/css">
+  pre:not([class]) {
+    background-color: white;
+  }
+</style>
+<script type="text/javascript">
+if (window.hljs) {
+  hljs.configure({languages: []});
+  hljs.initHighlightingOnLoad();
+  if (document.readyState && document.readyState === "complete") {
+    window.setTimeout(function() { hljs.initHighlighting(); }, 0);
+  }
+}
+</script>
+
+
+
+<style type="text/css">
+h1 {
+  font-size: 34px;
+}
+h1.title {
+  font-size: 38px;
+}
+h2 {
+  font-size: 30px;
+}
+h3 {
+  font-size: 24px;
+}
+h4 {
+  font-size: 18px;
+}
+h5 {
+  font-size: 16px;
+}
+h6 {
+  font-size: 12px;
+}
+.table th:not([align]) {
+  text-align: left;
+}
+</style>
+
+
+
+
+<style type = "text/css">
+.main-container {
+  max-width: 940px;
+  margin-left: auto;
+  margin-right: auto;
+}
+code {
+  color: inherit;
+  background-color: rgba(0, 0, 0, 0.04);
+}
+img {
+  max-width:100%;
+}
+.tabbed-pane {
+  padding-top: 12px;
+}
+.html-widget {
+  margin-bottom: 20px;
+}
+button.code-folding-btn:focus {
+  outline: none;
+}
+summary {
+  display: list-item;
+}
+</style>
+
+
+
+<!-- tabsets -->
+
+<style type="text/css">
+.tabset-dropdown > .nav-tabs {
+  display: inline-table;
+  max-height: 500px;
+  min-height: 44px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.tabset-dropdown > .nav-tabs > li.active:before {
+  content: "";
+  font-family: 'Glyphicons Halflings';
+  display: inline-block;
+  padding: 10px;
+  border-right: 1px solid #ddd;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li.active:before {
+  content: "&#xe258;";
+  border: none;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open:before {
+  content: "";
+  font-family: 'Glyphicons Halflings';
+  display: inline-block;
+  padding: 10px;
+  border-right: 1px solid #ddd;
+}
+
+.tabset-dropdown > .nav-tabs > li.active {
+  display: block;
+}
+
+.tabset-dropdown > .nav-tabs > li > a,
+.tabset-dropdown > .nav-tabs > li > a:focus,
+.tabset-dropdown > .nav-tabs > li > a:hover {
+  border: none;
+  display: inline-block;
+  border-radius: 4px;
+  background-color: transparent;
+}
+
+.tabset-dropdown > .nav-tabs.nav-tabs-open > li {
+  display: block;
+  float: none;
+}
+
+.tabset-dropdown > .nav-tabs > li {
+  display: none;
+}
+</style>
+
+<!-- code folding -->
+
+
+
+<style type="text/css">
+
+#section-TOC {
+  margin: 25px 0px 20px 0px;
+}
+@media (max-width: 768px) {
+#section-TOC {
+  position: relative;
+  width: 100%;
+}
+}
+
+@media print {
+.toc-content {
+  /* see https://github.com/w3c/csswg-drafts/issues/4434 */
+  float: right;
+}
+}
+
+.toc-content {
+  padding-left: 30px;
+  padding-right: 40px;
+}
+
+div.main-container {
+  max-width: 1200px;
+}
+
+div.tocify {
+  width: 20%;
+  max-width: 260px;
+  max-height: 85%;
+}
+
+@media (min-width: 768px) and (max-width: 991px) {
+  div.tocify {
+    width: 25%;
+  }
+}
+
+@media (max-width: 767px) {
+  div.tocify {
+    width: 100%;
+    max-width: none;
+  }
+}
+
+.tocify ul, .tocify li {
+  line-height: 20px;
+}
+
+.tocify-subheader .tocify-item {
+  font-size: 0.90em;
+}
+
+.tocify .list-group-item {
+  border-radius: 0px;
+}
+
+
+</style>
+
+
+
+</head>
+
+<body>
+
+
+<div class="container-fluid main-container">
+
+
+<!-- setup 3col/9col grid for toc_float and main content  -->
+<div class="row-fluid">
+<div class="col-xs-12 col-sm-4 col-md-3">
+<div id="section-TOC" class="tocify">
+</div>
+</div>
+
+<div class="toc-content col-xs-12 col-sm-8 col-md-9">
+
+
+
+
+<div class="navbar navbar-default navbar-fixed-top" role="navigation">
+  <div class="container">
+    <div class="navbar-header">
+      <a class="navbar-brand" href="../IndexPage/">
+        <img src="../include/gene.png" height="28" width="28">
+      </a>
+    </div>
+    <div id="navbar" class="navbar-collapse collapse">
+      <ul class="nav navbar-nav">
+        <li><a href="../IndexPage/">Home</a></li><li class="dropdown">
+  <a href="authoring" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">
+    Data processing<span class="caret"></span>
+  </a>
+  <ul class="dropdown-menu" role="menu"><li><a href=../Appendix_PDvsControls_Padlock/>Appendix PD vs Controls (bisulfite)</a></li><li><a href=../Appendix_PDvsControls_RNAseq/>Appendix PD vs Controls (RNA-seq)</a></li><li><a href=../Brain_OFB_Padlock_CGonly/>Olfactory bulb PD vs Controls (bisulfite)</a></li><li><a href=../Brain_PFCRep_Padlock_withGLU/>Prefrontal cortex PD vs Controls (bisulfite)</a></li><li><a href=../Brain_PFCRep_Padlock_withGLU_Braak/>Prefrontal cortex PD vs Controls stagewise (bisulfite)</a></li><li><a href=../Brain_PFC_Padlock_CGonly/>Prefrontal cortex replicate PD vs Controls (bisulfite)</a></li><li><a href=../Appendix_AgeAcceleration_Padlock/>Appendix Aging (bisulfite)</a></li><li><a href=../Appendix_AgeAcceleration_RNAseq/>Appendix Aging (RNA-seq)</a></li><li><a href=../Brain_AgeAcceleration_Padlock/>Prefrontal cortex aging (bisulfite)</a></li><li><a href=../Mice_CecalPatch_Padlock/>Mice rAAV-a-syn (bisulfite)</a></li><li><a href=../Mice_DSS_Padlock/>Mice DSS (bisulfite)</a></li>
+          </ul>
+        </li><li class="dropdown">
+  <a href="authoring" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">
+    Results<span class="caret"></span>
+  </a>
+  <ul class="dropdown-menu" role="menu"><li><a href=../Results_Appendix/>Appendix</a></li><li><a href=../Results_Brain/>Brain</a></li><li><a href=../Results_Proteomics/>Proteomics</a></li><li><a href=../Results_Aging/>Aging</a></li><li><a href=../Results_Mice/>Mice</a></li><li><a href=../Results_etc/>etc</a></li>
+          </ul>
+        </li><li class="dropdown">
+  <a href="authoring" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-expanded="false">
+    Figures<span class="caret"></span>
+  </a>
+  <ul class="dropdown-menu" role="menu"><li><a href=../Figure1/>Figure 1</a></li><li><a href=../Figure2/>Figure 2</a></li><li><a href=../Figure3/>Figure 3</a></li><li><a href=../Figure4/>Figure 4</a></li><li><a href=../Figure5/>Figure 5</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div><!--/.nav-collapse -->
+  </div><!--/.container -->
+</div><!--/.navbar -->
+
+<div class="fluid-row" id="section-header">
+
+
+
+<h1 class="title toc-ignore">Appendix PD vs Controls, RNA-seq</h1>
+
+</div>
+
+
+<!-- # (c)  Juozas Gordevičius -->
+<div id="section-parameters" class="section level1">
+<h1>Parameters</h1>
+<pre><code>## {
+##   &quot;host&quot;: &quot;C02ZG04PM0XV&quot;,
+##   &quot;nPerm&quot;: 40,
+##   &quot;workers&quot;: 41,
+##   &quot;outliers&quot;: {
+##     &quot;thresholdSD&quot;: 3,
+##     &quot;noOfPCs&quot;: 2,
+##     &quot;removeOutliers&quot;: true,
+##     &quot;shape&quot;: &quot;Diagnosis&quot;
+##   },
+##   &quot;clustering&quot;: {
+##     &quot;groups&quot;: [&quot;Diagnosis&quot;, &quot;Sex&quot;, &quot;substr(Sample_ID, 1, 1)&quot;, &quot;RIN &lt; median(RIN)&quot;],
+##     &quot;addClustersToModel&quot;: 0
+##   },
+##   &quot;normalization&quot;: {
+##     &quot;normalize&quot;: false,
+##     &quot;plotColor&quot;: &quot;Diagnosis&quot;
+##   },
+##   &quot;imputation&quot;: {
+##     &quot;imputeBetas&quot;: false,
+##     &quot;imputeCounts&quot;: false
+##   },
+##   &quot;model&quot;: {
+##     &quot;formula&quot;: &quot;~ Diagnosis + .&quot;,
+##     &quot;formula0&quot;: &quot;~ . - Diagnosis&quot;,
+##     &quot;contrasts&quot;: {},
+##     &quot;svRange&quot;: [1, 2, 3, 4, 5, 6],
+##     &quot;nsv&quot;: 5,
+##     &quot;bacon&quot;: false
+##   }
+## }</code></pre>
+</div>
+<div id="section-data" class="section level1">
+<h1>Data</h1>
+<p>Resulting data structure:</p>
+<pre><code>##      sample counts genome   tpm modelData
+## [1,]     28  15929  15929 15929        28
+## [2,]      7     28      6    28         5</code></pre>
+</div>
+<div id="section-analysis" class="section level1">
+<h1>Analysis</h1>
+<div id="section-outlier-identification" class="section level2">
+<h2>Outlier identification</h2>
+<p><img src="index_files/figure-html/outliers_plotPCAPairs-1.png" width="100%" /></p>
+<table class="table table-striped table-hover" style="margin-left: auto; margin-right: auto;">
+<thead>
+<tr>
+<th style="text-align:right;">
+ID
+</th>
+<th style="text-align:left;">
+Sample_ID
+</th>
+<th style="text-align:right;">
+Age
+</th>
+<th style="text-align:left;">
+Sex
+</th>
+<th style="text-align:right;">
+PMI
+</th>
+<th style="text-align:left;">
+Diagnosis
+</th>
+<th style="text-align:right;">
+RIN
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Outliers have been removed.</p>
+</blockquote>
+<p>[1] “untouched tables: genome”</p>
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Clustering before normalization 
+-->
+</div>
+<div id="section-sample-clustering" class="section level2">
+<h2>Sample clustering</h2>
+<p>Hierarchical clustering using correlations as similarity measure and Ward linkage.</p>
+<p><img src="index_files/figure-html/unnamed-chunk-5-1.png" width="100%" /></p>
+<!-- 
+  @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+  Normalization
+-->
+</div>
+<div id="section-normalization" class="section level2">
+<h2>Normalization</h2>
+<p>Signal density before normalization</p>
+<p><img src="index_files/figure-html/unnamed-chunk-7-1.png" width="100%" /></p>
+<!-- After normalization -->
+<blockquote>
+<p>No normalization performed.</p>
+</blockquote>
+</div>
+<div id="section-covariates" class="section level2">
+<h2>Covariates</h2>
+<p>Covariates used in subsequent models</p>
+<pre><code>## [1] &quot;Diagnosis&quot; &quot;Age&quot;       &quot;Sex&quot;       &quot;PMI&quot;       &quot;RIN&quot;</code></pre>
+<p>Are any of the covariates related to the variable of interest? (Assuming that the first variable in modelData is the one of interest).</p>
+<pre><code>## 
+## Call:
+## glm(formula = formula, family = &quot;binomial&quot;, data = data$modelData)
+## 
+## Deviance Residuals: 
+##     Min       1Q   Median       3Q      Max  
+## -1.7072  -0.8607  -0.4649   0.9568   2.0124  
+## 
+## Coefficients:
+##              Estimate Std. Error z value Pr(&gt;|z|)  
+## (Intercept) -9.264240   5.530521  -1.675   0.0939 .
+## Age          0.100475   0.047583   2.112   0.0347 *
+## Sexf        -0.328793   0.904800  -0.363   0.7163  
+## PMI          0.008894   0.037085   0.240   0.8105  
+## RIN          0.201094   0.654838   0.307   0.7588  
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## (Dispersion parameter for binomial family taken to be 1)
+## 
+##     Null deviance: 38.243  on 27  degrees of freedom
+## Residual deviance: 31.814  on 23  degrees of freedom
+## AIC: 41.814
+## 
+## Number of Fisher Scoring iterations: 4</code></pre>
+<p><img src="index_files/figure-html/unnamed-chunk-11-1.png" width="100%" /></p>
+</div>
+</div>
+<div id="section-robust-lmfit" class="section level1">
+<h1>Robust lmFit</h1>
+<pre class="r"><code>rnaseq &lt;- data$tpm
+prefix &lt;- &quot;r1_&quot;
+modelparams &lt;- list(
+  variabilityQuantile = 0.1,
+  voom = TRUE,
+  downloadDataMatrix = TRUE
+  )</code></pre>
+<div id="section-filter-least-variable" class="section level2">
+<h2>Filter least variable</h2>
+<blockquote>
+<p>Removed 1593 of 15929 least variable genes</p>
+</blockquote>
+</div>
+<div id="section-perform-voom" class="section level2">
+<h2>Perform VOOM</h2>
+<pre><code>## Voom performed on given counts</code></pre>
+<pre><code>## Relation of voom normalization factors to other covariates:</code></pre>
+<p><img src="index_files/figure-html/unnamed-chunk-16-1.png" width="100%" /></p>
+<pre><code>## 
+## Call:
+## lm(formula = dgelist$samples$norm.factors ~ ., data = data$modelData)
+## 
+## Residuals:
+##       Min        1Q    Median        3Q       Max 
+## -0.170179 -0.070026 -0.009013  0.064437  0.199343 
+## 
+## Coefficients:
+##                  Estimate Std. Error t value Pr(&gt;|t|)    
+## (Intercept)      0.993535   0.240932   4.124 0.000446 ***
+## DiagnosisPD/LBD  0.090945   0.044060   2.064 0.050999 .  
+## Age             -0.003658   0.002075  -1.763 0.091790 .  
+## Sexf            -0.090162   0.040579  -2.222 0.036887 *  
+## PMI             -0.001713   0.001702  -1.007 0.324904    
+## RIN              0.047655   0.030760   1.549 0.135586    
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## 
+## Residual standard error: 0.1026 on 22 degrees of freedom
+## Multiple R-squared:  0.4141, Adjusted R-squared:  0.2809 
+## F-statistic:  3.11 on 5 and 22 DF,  p-value: 0.02846</code></pre>
+</div>
+<div id="section-data-download" class="section level2">
+<h2>Data download</h2>
+<blockquote>
+<p><a href="www/r1_rnaseq.RDS">Download processed data (.RDS)</a> file.</p>
+</blockquote>
+</div>
+<div id="section-data-pcs-vs-covariates" class="section level2">
+<h2>Data PCs vs Covariates</h2>
+<p>Fit covariates to the PCs using limma</p>
+<pre><code>## Removing intercept from test coefficients</code></pre>
+<table class="table table-striped table-hover" style="margin-left: auto; margin-right: auto;">
+<thead>
+<tr>
+<th style="text-align:left;">
+</th>
+<th style="text-align:right;">
+DiagnosisPD.LBD
+</th>
+<th style="text-align:right;">
+Age
+</th>
+<th style="text-align:right;">
+Sexf
+</th>
+<th style="text-align:right;">
+PMI
+</th>
+<th style="text-align:right;">
+RIN
+</th>
+<th style="text-align:right;">
+AveExpr
+</th>
+<th style="text-align:right;">
+F
+</th>
+<th style="text-align:right;">
+P.Value
+</th>
+<th style="text-align:right;">
+adj.P.Val
+</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left;">
+PC2
+</td>
+<td style="text-align:right;">
+6.4857445
+</td>
+<td style="text-align:right;">
+0.6488648
+</td>
+<td style="text-align:right;">
+-1.2875831
+</td>
+<td style="text-align:right;">
+1.0982406
+</td>
+<td style="text-align:right;">
+21.8422150
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+3.5464353
+</td>
+<td style="text-align:right;">
+0.0149699
+</td>
+<td style="text-align:right;">
+0.1029974
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC1
+</td>
+<td style="text-align:right;">
+-53.9112724
+</td>
+<td style="text-align:right;">
+2.2610620
+</td>
+<td style="text-align:right;">
+55.1151031
+</td>
+<td style="text-align:right;">
+1.1098013
+</td>
+<td style="text-align:right;">
+-26.2827612
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+3.2927973
+</td>
+<td style="text-align:right;">
+0.0205995
+</td>
+<td style="text-align:right;">
+0.1029974
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC5
+</td>
+<td style="text-align:right;">
+-10.7848982
+</td>
+<td style="text-align:right;">
+0.3304707
+</td>
+<td style="text-align:right;">
+-1.6438699
+</td>
+<td style="text-align:right;">
+-0.6116842
+</td>
+<td style="text-align:right;">
+-4.1489646
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+2.8836805
+</td>
+<td style="text-align:right;">
+0.0349129
+</td>
+<td style="text-align:right;">
+0.1163764
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC6
+</td>
+<td style="text-align:right;">
+0.2460965
+</td>
+<td style="text-align:right;">
+0.1125172
+</td>
+<td style="text-align:right;">
+-6.6157410
+</td>
+<td style="text-align:right;">
+0.5292852
+</td>
+<td style="text-align:right;">
+-6.4677740
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+1.7955940
+</td>
+<td style="text-align:right;">
+0.1510716
+</td>
+<td style="text-align:right;">
+0.3776790
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC10
+</td>
+<td style="text-align:right;">
+-2.4921308
+</td>
+<td style="text-align:right;">
+0.2356245
+</td>
+<td style="text-align:right;">
+-7.5834237
+</td>
+<td style="text-align:right;">
+-0.1259709
+</td>
+<td style="text-align:right;">
+-1.7174806
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+1.1364760
+</td>
+<td style="text-align:right;">
+0.3678235
+</td>
+<td style="text-align:right;">
+0.6998832
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC3
+</td>
+<td style="text-align:right;">
+-10.4553900
+</td>
+<td style="text-align:right;">
+-0.0224030
+</td>
+<td style="text-align:right;">
+-2.3775626
+</td>
+<td style="text-align:right;">
+0.5267407
+</td>
+<td style="text-align:right;">
+-4.2755394
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+1.0339670
+</td>
+<td style="text-align:right;">
+0.4199299
+</td>
+<td style="text-align:right;">
+0.6998832
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC9
+</td>
+<td style="text-align:right;">
+-1.2319318
+</td>
+<td style="text-align:right;">
+-0.2333050
+</td>
+<td style="text-align:right;">
+-5.1130066
+</td>
+<td style="text-align:right;">
+0.1185433
+</td>
+<td style="text-align:right;">
+-1.2395886
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+0.7658640
+</td>
+<td style="text-align:right;">
+0.5832307
+</td>
+<td style="text-align:right;">
+0.8331868
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC4
+</td>
+<td style="text-align:right;">
+0.1788954
+</td>
+<td style="text-align:right;">
+-0.2970285
+</td>
+<td style="text-align:right;">
+9.4882034
+</td>
+<td style="text-align:right;">
+0.1995073
+</td>
+<td style="text-align:right;">
+2.1405200
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+0.5978688
+</td>
+<td style="text-align:right;">
+0.7018784
+</td>
+<td style="text-align:right;">
+0.8773480
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC7
+</td>
+<td style="text-align:right;">
+2.9141111
+</td>
+<td style="text-align:right;">
+0.0527670
+</td>
+<td style="text-align:right;">
+-0.6964824
+</td>
+<td style="text-align:right;">
+0.0424663
+</td>
+<td style="text-align:right;">
+1.7699162
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+0.1888634
+</td>
+<td style="text-align:right;">
+0.9640173
+</td>
+<td style="text-align:right;">
+0.9669156
+</td>
+</tr>
+<tr>
+<td style="text-align:left;">
+PC8
+</td>
+<td style="text-align:right;">
+-2.5905817
+</td>
+<td style="text-align:right;">
+-0.0020614
+</td>
+<td style="text-align:right;">
+2.0569117
+</td>
+<td style="text-align:right;">
+0.1093336
+</td>
+<td style="text-align:right;">
+-0.3423004
+</td>
+<td style="text-align:right;">
+0
+</td>
+<td style="text-align:right;">
+0.1815517
+</td>
+<td style="text-align:right;">
+0.9669156
+</td>
+<td style="text-align:right;">
+0.9669156
+</td>
+</tr>
+</tbody>
+</table>
+<p>The covariates significantly affecting the PCs using ANOVA:</p>
+<p><img src="index_files/figure-html/unnamed-chunk-20-1.png" width="100%" /></p>
+</div>
+<div id="section-select-the-number-of-svs" class="section level2">
+<h2>Select the number of SVs</h2>
+<p>All known covariates are regressed from data and PCA of residuals is computed. The number of PCs that explain more than 5% of variability is used as the desired number of SVs.</p>
+<pre><code>## Number of SVs specified in parameters is 5</code></pre>
+</div>
+<div id="section-probe-level-models" class="section level2">
+<h2>Probe-level models</h2>
+<div id="section-p-value-distribution" class="section level3">
+<h3>P value distribution</h3>
+<p><img src="index_files/figure-html/unnamed-chunk-25-1.png" width="100%" /></p>
+</div>
+<div id="section-volcano-plot" class="section level3">
+<h3>Volcano plot</h3>
+<p><img src="index_files/figure-html/unnamed-chunk-27-1.png" width="100%" /></p>
+</div>
+<div id="section-manhattan-plot" class="section level3">
+<h3>Manhattan plot</h3>
+<p><img src="index_files/figure-html/unnamed-chunk-28-1.png" width="100%" /></p>
+</div>
+<div id="section-download-fits" class="section level3">
+<h3>Download fits</h3>
+<p><a href="www/r1_Appendix_PDvsControls_RNAseq.csv">Download model fit results (.csv)</a></p>
+</div>
+</div>
+</div>
+<div id="section-sessioninfo" class="section level1">
+<h1>SessionInfo</h1>
+<pre><code>## R version 3.6.1 (2019-07-05)
+## Platform: x86_64-apple-darwin13.4.0 (64-bit)
+## Running under: macOS Mojave 10.14.6
+## 
+## Matrix products: default
+## BLAS/LAPACK: /opt/anaconda3/envs/ALP/lib/libopenblasp-r0.3.7.dylib
+## 
+## locale:
+## [1] en_US.UTF-8/en_US.UTF-8/en_US.UTF-8/C/en_US.UTF-8/en_US.UTF-8
+## 
+## attached base packages:
+## [1] parallel  stats     graphics  grDevices utils     datasets  methods  
+## [8] base     
+## 
+## other attached packages:
+##  [1] edgeR_3.28.0          latex2exp_0.4.0       doSNOW_1.0.18        
+##  [4] snow_0.4-3            itertools_0.1-3       iterators_1.0.12     
+##  [7] limma_3.42.0          impute_1.60.0         WGCNA_1.68           
+## [10] fastcluster_1.1.25    dynamicTreeCut_1.63-1 glue_1.3.1           
+## [13] foreach_1.4.7         ggpubr_0.2.4          magrittr_1.5         
+## [16] plotly_4.9.1          ggplot2_3.2.1         dplyr_0.8.3          
+## [19] data.table_1.12.8     kableExtra_1.1.0      knitr_1.26           
+## [22] shiny_1.4.0          
+## 
+## loaded via a namespace (and not attached):
+##  [1] colorspace_1.4-1      ggsignif_0.6.0        htmlTable_1.13.3     
+##  [4] base64enc_0.1-3       rstudioapi_0.10       farver_2.0.1         
+##  [7] ggrepel_0.8.1         bit64_0.9-7           AnnotationDbi_1.48.0 
+## [10] mvtnorm_1.0-11        xml2_1.2.2            codetools_0.2-16     
+## [13] splines_3.6.1         doParallel_1.0.15     robustbase_0.93-5    
+## [16] zeallot_0.1.0         Formula_1.2-3         jsonlite_1.6         
+## [19] cluster_2.1.0         GO.db_3.10.0          rrcov_1.4-7          
+## [22] readr_1.3.1           compiler_3.6.1        httr_1.4.1           
+## [25] backports_1.1.5       assertthat_0.2.1      Matrix_1.2-17        
+## [28] fastmap_1.0.1         lazyeval_0.2.2        later_1.0.0          
+## [31] acepack_1.4.1         htmltools_0.4.0       tools_3.6.1          
+## [34] gtable_0.3.0          Rcpp_1.0.3            Biobase_2.46.0       
+## [37] vctrs_0.2.1           preprocessCore_1.48.0 xfun_0.11            
+## [40] stringr_1.4.0         rvest_0.3.5           mime_0.8             
+## [43] lifecycle_0.1.0       DEoptimR_1.0-8        MASS_7.3-51.4        
+## [46] scales_1.1.0          hms_0.5.2             promises_1.1.0       
+## [49] RColorBrewer_1.1-2    yaml_2.2.0            memoise_1.1.0        
+## [52] gridExtra_2.3         rpart_4.1-15          latticeExtra_0.6-28  
+## [55] stringi_1.4.3         RSQLite_2.1.5         highr_0.8            
+## [58] S4Vectors_0.24.0      pcaPP_1.9-73          checkmate_1.9.4      
+## [61] BiocGenerics_0.32.0   rlang_0.4.2           pkgconfig_2.0.3      
+## [64] matrixStats_0.55.0    evaluate_0.14         lattice_0.20-38      
+## [67] purrr_0.3.3           labeling_0.3          htmlwidgets_1.5.1    
+## [70] cowplot_1.0.0         bit_1.1-14            tidyselect_0.2.5     
+## [73] robust_0.4-18.1       R6_2.4.1              IRanges_2.20.0       
+## [76] Hmisc_4.2-0           fit.models_0.5-14     DBI_1.1.0            
+## [79] pillar_1.4.3          foreign_0.8-72        withr_2.1.2          
+## [82] survival_2.44-1.1     nnet_7.3-12           tibble_2.1.3         
+## [85] crayon_1.3.4          rmarkdown_1.18        locfit_1.5-9.1       
+## [88] grid_3.6.1            blob_1.2.0            digest_0.6.23        
+## [91] webshot_0.5.2         xtable_1.8-4          tidyr_1.0.0          
+## [94] httpuv_1.5.2          stats4_3.6.1          munsell_0.5.0        
+## [97] viridisLite_0.3.0</code></pre>
+<!--html_preserve-->
+<script type="application/shiny-prerendered" data-context="dependencies">
+{"type":"list","attributes":{},"value":[{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["jquery"]},{"type":"character","attributes":{},"value":["1.11.3"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/jquery"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["jquery.min.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["bootstrap"]},{"type":"character","attributes":{},"value":["3.3.5"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/bootstrap"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["viewport"]}},"value":[{"type":"character","attributes":{},"value":["width=device-width, initial-scale=1"]}]},{"type":"character","attributes":{},"value":["js/bootstrap.min.js","shim/html5shiv.min.js","shim/respond.min.js"]},{"type":"character","attributes":{},"value":["css/bootstrap.min.css"]},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["jquery"]},{"type":"character","attributes":{},"value":["1.11.3"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/jquery"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["jquery.min.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["jqueryui"]},{"type":"character","attributes":{},"value":["1.11.4"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/jqueryui"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["jquery-ui.min.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["tocify"]},{"type":"character","attributes":{},"value":["1.9.1"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/tocify"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["jquery.tocify.js"]},{"type":"character","attributes":{},"value":["jquery.tocify.css"]},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["jquery"]},{"type":"character","attributes":{},"value":["1.11.3"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/jquery"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["jquery.min.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["navigation"]},{"type":"character","attributes":{},"value":["1.1"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/navigation-1.1"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["tabsets.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["highlightjs"]},{"type":"character","attributes":{},"value":["9.12.0"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["rmd/h/highlightjs"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["highlight.js"]},{"type":"character","attributes":{},"value":["default.css"]},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["rmarkdown"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.18"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["kePrint"]},{"type":"character","attributes":{},"value":["0.0.1"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["kePrint-0.0.1"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["kePrint.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["kableExtra"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.1.0"]}]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["name","version","src","meta","script","stylesheet","head","attachment","package","all_files","pkgVersion"]},"class":{"type":"character","attributes":{},"value":["html_dependency"]}},"value":[{"type":"character","attributes":{},"value":["kePrint"]},{"type":"character","attributes":{},"value":["0.0.1"]},{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["file"]}},"value":[{"type":"character","attributes":{},"value":["kePrint-0.0.1"]}]},{"type":"NULL"},{"type":"character","attributes":{},"value":["kePrint.js"]},{"type":"NULL"},{"type":"NULL"},{"type":"NULL"},{"type":"character","attributes":{},"value":["kableExtra"]},{"type":"logical","attributes":{},"value":[true]},{"type":"character","attributes":{},"value":["1.1.0"]}]}]}
+</script>
+<!--/html_preserve-->
+<!--html_preserve-->
+<script type="application/shiny-prerendered" data-context="execution_dependencies">
+{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["packages"]}},"value":[{"type":"list","attributes":{"names":{"type":"character","attributes":{},"value":["packages","version"]},"class":{"type":"character","attributes":{},"value":["data.frame"]},"row.names":{"type":"integer","attributes":{},"value":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127]}},"value":[{"type":"character","attributes":{},"value":["acepack","AnnotationDbi","assertthat","backports","base","base64enc","Biobase","BiocGenerics","bit","bit64","blob","checkmate","cluster","codetools","colorspace","compiler","cowplot","crayon","data.table","datasets","DBI","DEoptimR","digest","doParallel","doSNOW","dplyr","dynamicTreeCut","edgeR","evaluate","farver","fastcluster","fastmap","fit.models","foreach","foreign","Formula","ggplot2","ggpubr","ggrepel","ggsignif","glue","GO.db","graphics","grDevices","grid","gridExtra","gtable","highr","Hmisc","hms","htmlTable","htmltools","htmlwidgets","httpuv","httr","impute","IRanges","iterators","itertools","jsonlite","kableExtra","knitr","labeling","later","latex2exp","lattice","latticeExtra","lazyeval","lifecycle","limma","locfit","magrittr","MASS","Matrix","matrixStats","memoise","methods","mime","munsell","mvtnorm","nnet","parallel","pcaPP","pillar","pkgconfig","plotly","preprocessCore","promises","purrr","R6","RColorBrewer","Rcpp","readr","rlang","rmarkdown","robust","robustbase","rpart","rrcov","RSQLite","rstudioapi","rvest","S4Vectors","scales","shiny","snow","splines","stats","stats4","stringi","stringr","survival","tibble","tidyr","tidyselect","tools","utils","vctrs","viridisLite","webshot","WGCNA","withr","xfun","xml2","xtable","yaml","zeallot"]},{"type":"character","attributes":{},"value":["1.4.1","1.48.0","0.2.1","1.1.5","3.6.1","0.1-3","2.46.0","0.32.0","1.1-14","0.9-7","1.2.0","1.9.4","2.1.0","0.2-16","1.4-1","3.6.1","1.0.0","1.3.4","1.12.8","3.6.1","1.1.0","1.0-8","0.6.23","1.0.15","1.0.18","0.8.3","1.63-1","3.28.0","0.14","2.0.1","1.1.25","1.0.1","0.5-14","1.4.7","0.8-72","1.2-3","3.2.1","0.2.4","0.8.1","0.6.0","1.3.1","3.10.0","3.6.1","3.6.1","3.6.1","2.3","0.3.0","0.8","4.2-0","0.5.2","1.13.3","0.4.0","1.5.1","1.5.2","1.4.1","1.60.0","2.20.0","1.0.12","0.1-3","1.6","1.1.0","1.26","0.3","1.0.0","0.4.0","0.20-38","0.6-28","0.2.2","0.1.0","3.42.0","1.5-9.1","1.5","7.3-51.4","1.2-17","0.55.0","1.1.0","3.6.1","0.8","0.5.0","1.0-11","7.3-12","3.6.1","1.9-73","1.4.3","2.0.3","4.9.1","1.48.0","1.1.0","0.3.3","2.4.1","1.1-2","1.0.3","1.3.1","0.4.2","1.18","0.4-18.1","0.93-5","4.1-15","1.4-7","2.1.5","0.10","0.3.5","0.24.0","1.1.0","1.4.0","0.4-3","3.6.1","3.6.1","3.6.1","1.4.3","1.4.0","2.44-1.1","2.1.3","1.0.0","0.2.5","3.6.1","3.6.1","0.2.1","0.3.0","0.5.2","1.68","2.1.2","0.11","1.2.2","1.8-4","2.2.0","0.1.0"]}]}]}
+</script>
+<!--/html_preserve-->
+</div>
+
+<script type="text/javascript" src="../libs/fluidbox/jquery.fluidbox.min.js"></script>
+<script type="text/javascript" src="../include/js/enable-fluidbox.js"></script>
+
+
+</div>
+</div>
+
+</div>
+
+<script>
+
+// add bootstrap table styles to pandoc tables
+function bootstrapStylePandocTables() {
+  $('tr.header').parent('thead').parent('table').addClass('table table-condensed');
+}
+$(document).ready(function () {
+  bootstrapStylePandocTables();
+});
+
+
+</script>
+
+<!-- tabsets -->
+
+<script>
+$(document).ready(function () {
+  window.buildTabsets("section-TOC");
+});
+
+$(document).ready(function () {
+  $('.tabset-dropdown > .nav-tabs > li').click(function () {
+    $(this).parent().toggleClass('nav-tabs-open')
+  });
+});
+</script>
+
+<!-- code folding -->
+
+<script>
+$(document).ready(function ()  {
+
+    // move toc-ignore selectors from section div to header
+    $('div.section.toc-ignore')
+        .removeClass('toc-ignore')
+        .children('h1,h2,h3,h4,h5').addClass('toc-ignore');
+
+    // establish options
+    var options = {
+      selectors: "h1,h2",
+      theme: "bootstrap3",
+      context: '.toc-content',
+      hashGenerator: function (text) {
+        return text.replace(/[.\\/?&!#<>]/g, '').replace(/\s/g, '_').toLowerCase();
+      },
+      ignoreSelector: ".toc-ignore",
+      scrollTo: 0
+    };
+    options.showAndHide = true;
+    options.smoothScroll = true;
+
+    // tocify
+    var toc = $("#section-TOC").tocify(options).data("toc-tocify");
+});
+</script>
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

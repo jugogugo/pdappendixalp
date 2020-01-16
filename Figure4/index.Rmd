@@ -1,0 +1,507 @@
+---
+title: "Figure 4"
+output:
+  html_document:
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+editor_options: 
+  chunk_output_type: console
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R", chdir=TRUE)
+
+require("dplyr")
+require("data.table")
+require("gtools")
+require("foreach")
+require("circlize")
+require("ggplot2")
+require("RobustRankAggreg")
+require("glue")
+require("cowplot")
+require("broom")
+require("gridGraphics")
+require("magick")
+require("sitools")
+require("ggrepel")
+require("ggdendro")
+require("latex2exp")
+
+theme_publication <- function(font = 7) {
+  theme(
+    text = element_text(family = "Helvetica", size = font, color = "black"),
+    plot.title = element_text(size = font, color = "black"),
+    
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    panel.border = element_blank(),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+    
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    axis.line = element_line(color = "black"),
+    axis.text = element_text(size = font, color = "black"), 
+    axis.ticks = element_line(size = 0.3, color = "black"),
+    axis.title = element_text(size = font, color = "black"),
+    
+    # strip.background = element_rect(color = "white", fill = "white"),
+    strip.text.x = element_text(size = font, color = "black"),
+    strip.text.y = element_text(size = font, color = "black"),
+    
+    legend.background = element_rect(
+      fill = alpha("white", 0),
+      color = alpha("white", 0)
+    ),
+    legend.key = element_rect(color = NA, fill = NA),
+    legend.key.size = unit(0.2, "cm"),    
+    legend.text = element_text(size = font)
+  )
+}
+
+source("../code/pformat.R")
+
+```
+
+```{r}
+# Load aging fits from APX
+# path <- "../Appendix_AgingAllControls_Padlock/www/m6_Appendix_AgingAllControls_Padlock.csv"
+path <- "../Appendix_AgeAcceleration_Padlock/www/m6_Appendix_AgeAcceleration_Padlock.csv"
+apxfit <- fread(path)
+
+# Load aging fits from PFC
+# path <- "../Brain_PFCRep_Aging_Padlock/www/m6_Brain_PFCRep_Aging_Padlock.csv"
+path <- "../Brain_AgeAcceleration_Padlock/www/m6_Brain_AgeAcceleration_Padlock.csv"
+pfcfit <- fread(path)
+```
+
+```{r}
+# Direction of aging
+
+# In appendix
+colFC <- "C.DiagnosisControl.Age"
+colP  <- "P.DiagnosisControl.Age"
+t <- apxfit[, table(sign(get(colFC)), p.adjust(get(colP), "fdr") < 0.05)]
+f <- fisher.test(t)
+pd <- t %>%
+  reshape2::melt() %>%
+  setDT %>%
+  setnames(c("Direction", "Significant", "Count"))
+pd[, Color := 0]
+pd[Significant == TRUE, Color := Direction %>% as.numeric]
+pd[, Direction := 
+      factor(Direction, 
+        levels = c(-1, 1), 
+        labels=c("Hypo-\n methylation", "Hyper-\n methylation"))
+  ]
+pd[, Significant := 
+      factor(Significant, 
+        levels=c(FALSE, TRUE), 
+        labels=c("Background", "Significant"))
+  ]
+pd[, Fraction := Count / sum(Count), Significant]
+pd[, Type := "Appendix"]
+
+# In PFC
+colFC <- "C.GroupCTRL.Age"
+colP  <- "P.GroupCTRL.Age"
+t2 <- pfcfit[, table(sign(get(colFC)), p.adjust(get(colP), "fdr") < 0.05)]
+f2 <- fisher.test(t2)
+pd2 <- t2 %>%
+  reshape2::melt() %>%
+  setDT %>%
+  setnames(c("Direction", "Significant", "Count"))
+pd2[, Color := 0]
+pd2[Significant == TRUE, Color := Direction %>% as.numeric]
+pd2[, Direction := 
+      factor(Direction, 
+        levels = c(-1, 1), 
+        labels=c("Hypo-\n methylation", "Hyper-\n methylation"))
+  ]
+pd2[, Significant := 
+      factor(Significant, 
+        levels=c(FALSE, TRUE), 
+        labels=c("Background", "Significant"))
+  ]
+pd2[, Fraction := Count / sum(Count), Significant]
+pd2[, Type := "PFC"]
+
+or <- f$estimate %>% format(digits = 3)
+pv <- sprintf("p = %s", texP(f$p.value))
+text1 <- glue("{pv}")
+or <- f2$estimate %>% format(digits = 3)
+pv <- sprintf("p = %s", texP(f2$p.value))
+text2 <- glue("{pv}")
+textLayer <- data.table(
+  Type = c("Appendix", "PFC"), 
+  Text = c(text1, text2), 
+  X = c(1.5, 1.5),
+  Y = c(0.70, 0.70)
+)
+
+
+# Combine datasets and plot
+pA <-
+  rbind(pd, pd2) %>%
+  .[, Color := Color %>% factor(., levels = c(-1, 1, 0))] %>%
+  ggplot(., 
+    aes(Direction, Fraction, 
+      fill = Color %>% as.factor,
+      color = Color %>% as.factor)) + 
+    geom_bar(stat = "identity", 
+      position = position_dodge(width=0.5), 
+      width=0.95) + 
+    geom_text(data = textLayer, 
+              aes(x=X, y=Y, label = TeX(Text, output="character")), 
+              color = "black", size = 2.2,
+              inherit.aes = FALSE, parse=TRUE) + 
+    facet_grid(Type ~ .) + 
+    scale_y_continuous(labels = scales::percent_format(accuracy=1),
+      limits = c(0, 0.75)) +
+    scale_fill_manual("", values=c("#1f78b4", "#33a02c", "white"), 
+      labels = c("Hypo-methylation", "Hyper-methylation", "Not significant")) + 
+    scale_color_manual("", values=c("#1f78b4", "#33a02c", "grey60"), 
+      labels = c("Hypo-methylation", "Hyper-methylation", "Not significant")) + 
+    ylab("Fraction, %") +   
+    theme_publication() + 
+    theme(axis.title.x = element_blank())
+```
+
+```{r}
+# Enrichment of AP pathways
+
+pd <- fread("../Results_Aging/www/enrichment_Pathways_DMCs.csv")
+
+pd <- 
+pd[ Dir == "All"] %>%
+.[, TermName := paste(Name, sep=" ") %>% gsub(" ", "\n", .) %>% as.factor] %>%
+.[, P := p.value %>% format(digits = 3, scientific = TRUE) %>% gsub("e", "~x~10^", .)] %>%
+.[, P := paste0("\"p =\"~", P)] %>%
+.[, Stars := gtools::stars.pval(p.value)] %>%
+.[Stars == ".", Stars := ""] %>%
+.[, estimate := log(estimate)] %>%
+.[, conf.low := log(conf.low)] %>%
+.[, conf.high := log(conf.high)]
+
+pB <- 
+  ggplot(pd, aes(TermName, estimate, fill = p.value < 0.05)) + 
+  geom_bar(stat = "identity", color = "grey50", size = 0.25) + 
+  geom_hline(yintercept = 0, color = "grey50", size = 0.25) + 
+  geom_text(aes(label = Stars, y = estimate + 0.1 * sign(estimate)), 
+    size = 2.2, vjust = 1) +   
+  facet_grid(Type ~ ., scales = "free_y") + 
+  scale_fill_manual("Enrichment p", labels = c("> 0.05", "< 0.05"), values = c("white", "black")) + 
+  scale_y_continuous(limits = c(NA, 0.9)) + 
+  ylab("Odds ratio, log") + 
+  theme_publication() + 
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = c(0.3, 0.9), 
+        legend.direction = "vertical")
+
+# # quartz("", 7.2, 6)
+# ggdraw() +
+#   draw_plot(pB,
+#     x = 0.3, y = 0.545, width = 0.3, height = 0.45) 
+
+
+
+
+
+```
+
+```{r}
+# Aging hallmarks in PFC and appendix
+hallmarks <- fread("../Results_Aging/www/Aging_Hallmarks.csv")
+
+pd <- hallmarks[order(Score)] %>% 
+  .[1:15] %>%
+  .[, list(Gene, Score, EPFC = -log10(PFC.P), EAPX = -log10(APX.P))]
+pd[, Rank := 1:.N]
+pd[, Width := 1/(Score / sum(Score))]
+pd[, Width := Width / sum(Width)]
+pd[, Start := cumsum(c(0, Width[-.N]))]
+pd[, End := cumsum(Width)]
+pd[, Gene := factor(Gene, levels = pd$Gene)]
+
+pC <-
+  pd[, list(Gene, Rank, EPFC, EAPX)] %>% 
+  melt(id.vars = c("Gene", "Rank")) %>%
+  .[, variable := factor(variable, levels = c("EAPX", "EPFC"))] %>% 
+  .[value >= -log10(0.01), value := -log10(0.01)] %>%
+  ggplot(., aes(variable, Rank, fill = value)) + 
+  geom_tile(color = "white") + 
+  scale_fill_distiller("Significance,\n-log10(p)", palette = "OrRd", type = "seq", direction = 1) + 
+  scale_y_reverse(breaks = 1:15, labels = pd$Gene) + 
+  scale_x_discrete(labels = c("Appendix", "PFC")) + 
+  theme_publication() + 
+  theme(
+    axis.line.y = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank())
+
+# pC <-
+# pd[, list(Gene, Width, EPFC, EAPX)] %>% 
+# melt(id.vars = c("Gene", "Width")) %>%
+# .[value >= -log10(0.01), value := -log10(0.01)] %>%
+# ggplot(., aes(Gene, Width, group = variable, fill = value)) + 
+#   geom_bar(stat = "identity", width = 0.8, position = position_dodge(width = 0.9)) +
+#   ylab("Ranking score") + 
+#   scale_fill_distiller("Significance,\n-log10(p)", palette = "OrRd", type = "seq", direction = 1) + 
+#   theme_publication() + 
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# pC
+```
+
+
+```{r}
+# Aging trends in appendix
+path <- "../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv"
+apxpdfit <- fread(path)
+
+path <- "../Brain_PFCRep_Padlock_withGLU/www/m6_Brain_PFCRep_Padlock_withGLU.csv"
+pfcpdfit <- fread(path)
+
+
+pd <- merge(
+            apxfit[, list(
+                        ID, 
+                        C = C.DiagnosisControl.Age, 
+                        P=P.DiagnosisControl.Age, 
+                        Q = p.adjust(P.DiagnosisControl.Age, "fdr"))],
+            apxpdfit[, list(ID, logFC, P.Value, adj.P.Val)],
+            by = "ID"
+          ) %>%
+  .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, list(
+          AgingEffect = abs(C), 
+          PDEffect = abs(logFC),
+          Type = "Appendix"
+          )
+  ]
+
+pd2 <- merge(
+            pfcfit[, list(ID, C = C.GroupCTRL.Age, 
+                        P=P.GroupCTRL.Age, 
+                        Q = p.adjust(P.GroupCTRL.Age, "fdr"))],
+            pfcpdfit[, list(ID, logFC, P.Value, adj.P.Val)],
+            by = "ID"
+  ) %>%
+  .[P < 0.05 & P.Value < 0.05, ] %>%
+  .[, list( 
+          AgingEffect = abs(C), 
+          PDEffect = abs(logFC),
+          Type = "PFC"
+          )
+  ]
+
+pd <- rbind(pd, pd2)
+textLayer <-
+            pd[, cor.test(AgingEffect, PDEffect) %>% tidy, Type] %>%
+            select(Type, estimate, p.value) %>%
+            setDT() %>%
+            .[, label := 
+                  sprintf("r = $%s$, p %s %s", 
+                          format(estimate, digits=2), 
+                          ifelse(p.value == 0, "<", "="),
+                          texP(p.value)
+                         )
+            ]
+
+pD <- 
+  pd %>%
+  ggplot(., aes(AgingEffect, PDEffect)) + 
+    geom_point(shape = 1, color = "grey") +
+    geom_smooth(method = "lm", color = "black", size = 0.5) + 
+    geom_text(data = textLayer, aes(label = TeX(label, output="character")), inherit.aes=FALSE, parse = TRUE, 
+      x = -Inf, y = Inf, size = 2.2, hjust = -0.1, vjust = 1) +
+    facet_grid(Type ~ .) +
+    scale_x_continuous(
+      labels = scales::number_format(accuracy = 0.01)) + 
+    scale_y_continuous(limits = c(0, 8)) + 
+    xlab("Absolute aging effect") + 
+    ylab("Absolute PD effect") +
+    theme_publication()
+
+# dev.set(2)
+# ggdraw() +
+#   draw_plot(
+#     pD,
+#     x = 0, y = .2, width = 0.25, height = 0.37)
+
+```
+
+
+```{r}
+# Aging differences in appendix controls and PD cases
+computeTrends <- function(X, fit, colP, colFC, age, group) {
+  n <- nrow(X)
+  ids <- fit[ get(colFC) > 0][order(get(colP)), ID][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ID %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- data.table(Dir = "Hyper-M", Age = age, 
+    Trend = trend, Group = group)
+
+  ids <- fit[ get(colFC) < 0][order(get(colP)), ID][1:n]
+  ids <- ids[ ids %in% rownames(X) ]
+  w <- fit[ID %in% ids, get(colFC)]
+  w <- w / sum(w)
+  trend <- (X[ids,] * w) %>% colSums(na.rm=TRUE)
+  pd <- rbind(pd, data.table(Dir = "Hypo-M", Age = age, 
+    Trend = trend, Group = group))
+  pd
+}
+
+# Appendix
+apxdata <- readRDS("../Appendix_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+X <- lm( t(apxdata$methylation %>% na.omit) ~ ., 
+  data = apxdata$modelData %>% select(-Age))$residuals %>% t
+pd <- computeTrends(X, apxfit,
+                    colP  = "P.DiagnosisControl.Age",
+                    colFC = "C.DiagnosisControl.Age",
+                    age   = apxdata$modelData$Age,
+                    group = apxdata$modelData$Diagnosis) %>%
+  .[, Type := "Appendix"] %>% 
+  .[, Group := factor(Group, levels = c("Control", "PD/LBD"), labels = c("Control", "PD"))]
+
+
+# PFC 
+pfcdata <- readRDS("../Brain_AgeAcceleration_Padlock/www/m6_methylation.RDS")
+X <- lm( t(pfcdata$methylation %>% na.omit) ~ ., 
+  data = pfcdata$modelData %>% select(-Age))$residuals %>% t
+pd2 <- computeTrends(X, pfcfit,
+                    colP  = "P.GroupCTRL.Age",
+                    colFC = "C.GroupCTRL.Age",
+                    age   = pfcdata$modelData$Age,
+                    group = pfcdata$modelData$Group) %>%
+  .[, Type := "PFC"] %>%
+  .[, Group := factor(Group, levels = c("CTRL", "PD"), labels = c("Control", "PD"))]
+
+pd <- rbind(pd, pd2)
+textLayer <-
+            pd[, cor.test(Age, Trend) %>% tidy, list(Group, Type, Dir)] %>%
+            select(Group, Type, Dir, estimate, p.value) %>%
+            setDT() %>%
+            .[, label := 
+                  sprintf("r = $%s$, p %s %s", 
+                          format(estimate, digits=1), 
+                          ifelse(p.value == 0, "<", "="),
+                          texP(p.value)
+                         )
+            ] %>% 
+            .[, Age := 20] %>% 
+            .[, Trend := ifelse(Group == "Control", 0.9, 0.7)]
+
+pE <- 
+  pd %>%
+  ggplot(., aes(Age, Trend, color = Group)) + 
+    geom_point(size = 0.5, alpha = 0.3, aes(shape = Group, fill = Group)) + 
+    geom_smooth(method = 'lm', size = 0.5, se = FALSE) + 
+    geom_text(data = textLayer, aes(label = TeX(label, output="character")), 
+      parse = TRUE, 
+      size = 2.2, hjust=0) +
+    ylab("Mean normalized methylation") + 
+    facet_grid(Type ~ Dir, scales = "free_x") + 
+    scale_shape_manual(values = c(16, 17)) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    scale_fill_manual(values = c("black", "#e31a1c")) +
+    scale_y_continuous(limits = c(-0.8, 1)) + 
+    theme_publication()
+
+```
+
+
+```{r}
+# Age deceleration in PD
+predicted <- readRDS("../Appendix_AgeAcceleration_Padlock/m6_ageAcceleration.RDS")
+
+pd <- 
+  predicted[, 
+    list(
+      `P-A` = P-A,
+      Group = Diagnosis
+    )
+  ] %>%
+  .[, Group := factor(Group, 
+                  levels = c("Control", "PD/LBD"), 
+                  labels = c("Control", "PD"))]
+textLayer <- pd[, t.test(`P-A` ~ Group) %>% broom::tidy()] %>% setDT
+textLayer[, p.value := paste0("p = ", texP(p.value))]
+
+pF <- 
+  pd %>%
+  ggplot(., aes(Group, `P-A`, color = Group)) + 
+    geom_boxplot(outlier.size = 0) + 
+    geom_jitter(size = 0.5, shape = 1, alpha = 0.3) + 
+    geom_text(
+      data = textLayer, 
+      aes(label=latex2exp::TeX(p.value, output="character")),
+      inherit.aes = FALSE, parse = TRUE,
+      x = 1.5, y = 50, size = 2.2) + 
+    xlab("") + 
+    ylab("Predicted - Actual Age, years") + 
+    theme_bw(base_size = 10) +
+    scale_color_manual(values = c("black", "#e31a1c")) +
+    scale_y_continuous(limits = c(-26, 50)) + 
+    theme_publication() + 
+    theme(
+      legend.position="top",
+      axis.title.x = element_blank()
+      )
+# pF
+# ggdraw() +
+#   draw_plot(pF + guides(color=FALSE, shape=FALSE),
+#     x = 0.8, y = 0.235, width = 0.2, height = 0.32)
+```
+
+
+```{r, include = TRUE, fig.width = 7.2, fig.height = 7.2, dpi = 300}
+
+# quartz("", 7.2, 7.2)
+
+legendHypoHyper <- get_legend(pA)
+legendSig <- get_legend(pB)
+legendHallmarks <- get_legend(pC)
+legendGroup     <- get_legend(pE  + guides(
+      shape = FALSE, 
+      color = guide_legend(
+        override.aes = list(size = 2)
+      )
+    ))
+# draw_plot(legendHypoHyper,
+#   x = 0.1, y = 0.57, width = 0.2, height = 0.1) +
+
+
+##############
+suppressWarnings(
+	ggdraw() +
+	  draw_plot(pA + guides(color =FALSE, fill = FALSE),
+	    x = 0, y = 0.63, width = 0.3, height = 0.37) +
+	  draw_plot(pB,
+	    x = 0.3, y = 0.545, width = 0.3, height = 0.45) + 
+	  draw_plot(pC,
+	    x = 0.6, y = 0.64, width = 0.4, height = 0.36) +
+	  draw_plot(
+	    pD,
+	    x = 0, y = .2, width = 0.25, height = 0.37) +
+	  draw_plot(pE + theme(legend.position = "none"),
+	    x = 0.25, y = 0.2, width = 0.55, height = 0.37) +
+	  draw_plot(pF + guides(color=FALSE, shape=FALSE),
+	    x = 0.8, y = 0.235, width = 0.2, height = 0.32) +
+	  draw_plot(legendGroup,
+	    x = .87, y = 0.55, width = 0.2, height = 0.1) +
+	  draw_plot_label(
+	    label = LETTERS[1:6],
+	    size = 10,
+	    x = c(0, 0.3, 0.6, 0, 0.25, 0.8),
+	    y = c(1, 1,   1,   0.57, 0.57, 0.57))
+)
+ggsave("../Figure4/figure4.png", width = 7.2, height = 7.2, dpi = 300, units = "in")
+```

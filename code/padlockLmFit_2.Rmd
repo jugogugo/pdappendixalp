@@ -1,0 +1,453 @@
+```{r}
+source("../code/plots.R")
+source("../code/linearFits.R")
+source("../code/manhattanPlot.R")
+```
+
+## Removal of non-informative loci
+
+```{r}
+foo <- function(beta, grouping = NULL) {
+  if (is.null(grouping)) {
+    stable <- apply(beta, 1, function(I) {
+      sum(is.na(I) | I == 0 | I == 1)
+    })
+    # return the fraction 
+    return(stable / ncol(beta))
+  } else {
+    stable <- 
+      foreach( g = unique(grouping), .combine =cbind) %do% {
+        apply(beta[, grouping == g, drop=FALSE], 1, function(I) {
+          sum(is.na(I) | I == 0 | I == 1)
+        }) / ncol(beta[, grouping == g, drop=FALSE])
+      }
+    return(apply(stable, 1, max))
+  }
+}
+
+
+# touch()
+if (is.null(modelparams$stableBalancedAcross)) {
+  stableFraction <- cache(foo=foo, 
+    fname = glue("{prefix}stable.RDS"),
+    verbose = TRUE,
+    beta = methylation,
+    grouping = NULL)
+} else {
+  stableFraction <- cache(foo=foo, 
+    fname = glue("{prefix}stable.RDS"),
+    verbose = TRUE,
+    beta = methylation,
+    grouping = data$modelData[[modelparams$stableBalancedAcross]])
+}
+```
+
+Fraction of CGs that should be removed depending on threshold. Currently set
+threshold is  `r modelparams$allowStable * 100`%
+
+
+```{r, include=TRUE, results="asis"}
+threshold <- floor(modelparams$allowStable * ncol(methylation)) / ncol(methylation)
+stable <- stableFraction >= threshold
+if (sum(stable) > 0) {
+  cat(glue("> Removing {sum(stable)} stable loci.\n\n"))
+  methylation <- methylation[!stable, ]
+} else {
+  cat("> No loci going to be removed.\n\n")
+}
+```
+
+
+## Conversion of Beta values to M values
+
+```{r, include=TRUE, results="asis"}
+beta2m <- function(y, fixInfinity = FALSE) {
+  if (fixInfinity != FALSE) {
+    if (is.logical(fixInfinity) & fixInfinity == TRUE) {
+      n.obs <- sum(!is.na(y))  
+    } else {
+      n.obs <- 1/fixInfinity
+    }
+    y <- (y * (n.obs -1) + 0.5)/ n.obs
+  }
+  y <- log2(y / (1-y))
+  y[is.infinite(y)] <- NA
+  return(y)
+}
+
+if (modelparams$useMvalues == TRUE) {
+  cat("> Beta values were converted to M values.\n\n")
+  methylation <- beta2m(methylation,
+                        modelparams$fixInfinity)  
+} else {
+  cat("> Using beta values for model fits.\n\n")
+}
+```
+
+```{r, include=TRUE}
+hist(methylation, breaks=30)
+```
+
+## Data download
+
+```{r, include=TRUE, results="asis"}
+if (is.null(modelparams$downloadDataMatrix))
+  modelparams$downloadDataMatrix <- FALSE
+if (modelparams$downloadDataMatrix == TRUE) {
+
+  mydata <- list(
+    methylation = methylation,
+    genome = data$genome[match(rownames(methylation), ID), ],
+    key = data$sample,
+    modelData = data$modelData,
+    params = params
+    )
+  fname <- glue("www/{prefix}methylation.RDS")
+  if (!dir.exists("www")) 
+    dir.create("www")
+  saveRDS(mydata, file = fname)
+
+  cat(paste0("> [Download processed data (.RDS)](", fname, ") file.\n\n"))
+  rm(mydata, fname)
+} else {
+  cat("> No data to download.\n\n")
+}
+
+```
+
+
+## Data PCs vs Covariates
+
+
+```{r}
+# touch()
+pca <- cache(
+  foo = prcomp, 
+  fname = glue("{prefix}pca.RDS"), 
+  verbose = TRUE, 
+  x = t(methylation %>% na.omit), 
+  scale=TRUE, 
+  center=TRUE)
+```
+
+Fit covariates to the PCs using limma
+
+```{r, include=TRUE}
+lmFit( t(pca$x[, 1:10]), 
+  model.matrix(~., data$modelData)) %>% eBayes %>% topTable %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The covariates significantly affecting the PCs using ANOVA:
+
+```{r, include=TRUE}
+pd <- foreach (i = 1:6, .combine=rbind) %do% {
+  myanova <- lm(pca$x[,i] ~ ., data$modelData) %>% anova
+  data.table(PC=i, Variable=rownames(myanova), P=myanova$`Pr(>F)`)
+}
+pd[Variable != "Residuals"] %>%
+ggplot(., aes(Variable, -log10(P), color=as.factor(PC))) + 
+  geom_point(size=4) +
+  geom_hline(yintercept = -log10(0.05), color = "red", linetype="dashed") + 
+  scale_color_brewer("PC", palette="Dark2") + 
+  theme_bw(base_size = 10)
+```
+
+
+## Select the number of SVs
+
+All known covariates are regressed from data and PCA of residuals is computed. The number of 
+PCs that explain more than 5\% of variability is used as the desired number of SVs.
+
+```{r, include=TRUE}
+selectNSV <- function(x, covariates, svrange) {
+  z <- lm(t(na.omit(x)) ~ ., data = covariates)$residuals %>% t
+  pca <- prcomp(t(z), scale=TRUE, center=TRUE)
+  ve <- pca$sdev / sum(pca$sdev)
+  sum(ve[svrange] >= 0.05)
+}
+
+if (is.null(params$model$nsv)) {
+  nsv <- selectNSV(methylation, data$modelData, params$model$svRange)
+  message("Selected number of SVs ", nsv)
+} else {
+  nsv <- params$model$nsv
+  message("Number of SVs specified in parameters is ", nsv)
+}
+```
+
+
+## Probe-level models
+
+```{r}
+dir.create("www", showWarnings = FALSE)
+```
+
+```{r}
+# Initialize cluster
+nsvoptions <- sort(unique(c(0, params$model$svRange)))
+files <- c(
+  glue("{prefix}fit_limma_result.RDS"))
+if (!all(file.exists(files))) {
+  require(parallel)
+  require(doSNOW)
+  hosts <- rep("localhost", params$workers)
+  message(sprintf("Starting cluster on %s", paste(hosts, collapse=", ")))
+  mycluster <- makeCluster(hosts, type="SOCK", outfile="")    
+  registerDoSNOW(mycluster)
+  clusterSetupRNG(mycluster)  
+}
+
+
+# fit final model
+# touch()
+fit <- cache(
+            foo       = getLimmaFit, 
+            fname     = glue("{prefix}fit_limma_result.RDS"), 
+            verbose   = TRUE, 
+            M         = methylation, 
+            md        = data$modelData, 
+            formula   = params$model$formula,
+            formula0  = params$model$formula0, 
+            contrasts = params$model$contrasts,
+            nsv       = nsv, 
+            iteration = 0,
+            svaMethod = "SmartSVA")
+
+
+# stop cluster
+tryCatch({
+  message("Stopping cluster.")
+  registerDoSEQ()
+  stopCluster(mycluster)  
+}, error = function(e) {})
+
+```
+
+
+```{r}
+# Load padlock annotation
+if (grepl("Mice", basename(getwd()))) {
+  # Mouse annotation
+  manual <- fread("../etc/mm10_padlock_manual.csv")
+  manual[, Gene := strsplit(TargetID, split="_") %>% sapply(., `[[`, 1)]
+  manual[, Chr := gsub(":.*$", "", TargetLocation)]
+  manual[, Start := as.numeric(gsub("^chr.*:|-.*$", "", TargetLocation))]
+  manual[, End := as.numeric(gsub("^chr.*-", "", TargetLocation))]
+  manual[, Length := End - Start]
+  setkey(manual, Chr, Start, End)
+
+} else {
+  # Human
+  manual <- fread("../etc/PD_LYS_ordered_probes.csv", header=FALSE)
+  manual <- manual$V1 %>% strsplit(split=":")
+  manual <- data.table(
+    Gene = sapply(manual, '[[', 1),
+    Chr = sapply(manual, '[[', 2),
+    Start = sapply(manual, '[[', 3) %>% 
+      strsplit(split = "-") %>% 
+      sapply(., '[[', 1) %>% 
+      as.numeric,
+    End = sapply(manual, '[[', 3) %>% 
+      strsplit(split = "-") %>% 
+      sapply(., '[[', 2) %>%
+      as.numeric
+  )
+  setkey(manual, Chr, Start, End)
+}
+
+tryCatch(
+  {
+    setnames(data$genome, "chr", "Chr")
+  }, 
+  error = function(e) {}
+)
+
+fit <- merge(data$genome, fit, by="ID") %>% 
+  .[, Start := SNP] %>%
+  .[, End := SNP]
+setkey(fit, Chr, Start, End)  
+
+
+fit <- foverlaps(fit, manual, type="within", mult="first")
+fit$i.Start <- fit$i.End <- fit$Start <- fit$End <- NULL
+
+```
+
+### P value distribution
+
+```{r, include=TRUE}
+nsig <- fit[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+ggplot(fit, aes(P.Value)) + 
+  geom_histogram(bins=50, color="black", fill="white") +
+  xlab("P value") +
+  ggtitle(glue("P value distribution at nSV={nsv}\nFDR q < 0.05 #{nsig}")) +
+  theme_bw(base_size=10)  
+```
+
+
+### Volcano plot
+
+```{r}
+getVolcanoNoContrast <- function(fit) {
+  pd <- fit[!is.na(P.Value),]
+  pd[, Color := "none"]
+  pd[adj.P.Val < 0.05 & sign(logFC) < 0, Color := "hypo"]
+  pd[adj.P.Val < 0.05 & sign(logFC) > 0, Color := "hyper"]
+  pd[, Color := factor(Color, levels = c("none", "hypo", "hyper"))]
+  p1 <-pd %>%
+    .[ sample(.N, floor(.N * 0.2)), ] %>% 
+    ggplot(., aes(logFC, -log10(P.Value), 
+                  color = Color)) + 
+    geom_point(size=1.5) + 
+    xlab("Fold change") + 
+    ylab("-log10(P)") + 
+    scale_color_manual("Direction", 
+      values = c("grey50", "#1f78b4", "#33a02c")) +
+    guides(color = FALSE) + 
+    theme_bw(base_size=10)
+  p2 <- pd %>%
+    .[ sample(.N, floor(.N * 0.2)), ] %>% 
+    ggplot(., aes(abs(AveExpr), abs(logFC), 
+                  color = Color)) + 
+    geom_point(alpha=0.4, size=1.5) + 
+    xlab("Absolute average modification") + 
+    ylab("Absolute fold change") + 
+    scale_color_manual("Direction", 
+      values = c("grey50", "#1f78b4", "#33a02c")) +
+    theme_bw(base_size=10)
+  return(list(p1, p2))
+}
+
+getVolcanoForContrasts <- function(fit) {
+  plots <- foreach(contrast = params$model$contrasts) %do% {
+    # contrast <- params$model$contrasts[1]
+    field1 <- paste0("C.", contrast)
+    field2 <- paste0("P.", contrast)
+    pd <- fit[!is.na(P.Value), list(C=get(field1), P=get(field2))]
+    pd[, Q := p.adjust(P, "fdr")]
+    pd[, Color := "none"]
+    pd[Q < 0.05 & sign(C) < 0, Color := "hypo"]
+    pd[Q < 0.05 & sign(C) > 0, Color := "hyper"]
+    pd[, Color := factor(Color, levels = c("none", "hypo", "hyper"))]
+    pd %>%
+        .[ sample(.N, floor(.N * 0.2)), ] %>% 
+        ggplot(., aes(C, -log10(P), 
+                      color = Color)) + 
+        geom_point(size=1.5) + 
+        xlab("Fold change") + 
+        ylab("-log10(P)") + 
+        scale_color_manual("Direction", 
+          values = c("grey50", "#1f78b4", "#33a02c")) +
+        ggtitle(contrast) + 
+        guides(color = FALSE) + 
+        theme_bw(base_size=10)
+  }
+  return(plots)
+}
+```
+
+```{r, include=TRUE}
+if (is.null(params$model$contrasts)) {
+  # No contrasts specified
+  myplots <- getVolcanoNoContrast(fit)
+} else {
+  # One volcano plot for all contrasts
+  myplots <- getVolcanoForContrasts(fit)
+}
+
+n <- length(myplots)
+ggarrange(plotlist=myplots, 
+  ncol=min(2, n), 
+  nrow=n %/% 2 + n %%2,
+  labels = LETTERS[1:n],
+  common.legend = TRUE)
+```
+
+
+### Manhattan plot
+
+```{r, include=TRUE, results='asis', fig.width=7.2, fig.height=7.2/2}
+if (is.null(params$model$contrasts)) {
+  # No contrasts specified
+  # touch()
+  g(p1, p2) %=% cache(
+    foo=manhattanPlot, 
+    fname=glue("{prefix}manhattan.RDS"), 
+    verbose=FALSE, 
+    fit=fit)
+
+
+  p1 <- p1 +  
+    theme_bw(base_size=12) +
+    theme( 
+      legend.position="none",
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank()
+    )
+
+  p2 <- p2 + 
+    theme_bw(base_size=12) + 
+    theme( 
+      panel.border = element_blank(),
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    ) 
+  print(ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1)))
+} else {
+  for(contrast in params$model$contrasts) {
+    field1 <- paste0("C.", contrast)
+    field2 <- paste0("P.", contrast)
+    pd <- fit[, list(Chr, Gene, ID, SNP, logFC = get(field1), P.Value = get(field2))]
+    pd[, adj.P.Val := p.adjust(P.Value, "fdr")]
+
+    contrastName <- gsub("[ ()/]", "", contrast)
+    g(p1, p2) %=% cache(
+      foo=manhattanPlot, 
+      fname=glue("{prefix}manhattan_{contrastName}.RDS"), 
+      verbose=FALSE, 
+      fit=pd)
+    p1 <- p1 + ggtitle(contrast)
+
+    p1 <- p1 +  
+      theme_bw(base_size=12) +
+      theme( 
+        legend.position="none",
+        panel.border = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank()
+      )
+
+    p2 <- p2 + 
+      theme_bw(base_size=12) + 
+      theme( 
+        panel.border = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1)
+      ) 
+    print(ggarrange(p1, p2, labels=c("A", "B"), widths = c(3, 1)))
+  }
+}
+```
+
+### Download
+
+```{r}
+# prepare result file
+fname <- paste0(glue("www/{prefix}"), basename(getwd()), ".csv")
+fwrite(fit, file = fname, row.names = FALSE)
+```
+
+```{r, include=TRUE, results='asis'}
+cat(paste0("[Download model fit results (.csv)](", fname, ")\n"))
+```
+
+
+<!-- Final touches to remove lasting effects -->
+```{r}
+data$modelData[, CCMean := NULL]
+```

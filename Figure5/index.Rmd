@@ -1,0 +1,450 @@
+---
+title: "Figure 5"
+output:
+  html_document:
+    toc: false
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R", chdir=TRUE)
+require("ggrepel")
+require("cowplot")
+# GWAS genes
+geneList <- c("GBA","NUCKS1","SLC41A1","SIPA1L2","TMEM163","CCNT2","STK39","CHMP2B","MCCC1","TMEM175","DGKQ","FAM200B","CD38","FAM47E","SNCA","HLA-DRB6","HLA-DQA1","KLHL7","NUPL2","GPNMB","MICU3","BAG3","DLG2","MIR4697","LRRK2","OGFOD2","GCH1","TMEM229B","VPS13C","ZNF646","KAT8","ARHGAP27","CRHR1","SPPL2C","MAPT","STH","KANSL1","SYT4","LSM7","DDRGK1","ITPKB","IL1R2","SCN3A","SATB1","NCKIPSD","CDC71","ALAS1","TLR9","DNAH1","BAP1","PHF7","NISCH","STAB1","ITIH3","ITIH4","ANK2","CAMK2D","ELOVL7","ZNF184","CTSB","SORBS3","PDLIM2","C8orf58","BIN3","SH3GL2","FAM171A1","GALC","COQ7","TOX3","ATP6V0A1","PSMC3IP","TUBG2")
+
+# Convert GWAS genes from human into mouse
+gmap <- fread("../etc/padlock_genes_human2mouse.csv") %>% 
+  .[, list(V1, V2)]
+setnames(gmap, gmap[1,] %>% as.character)
+gmap <- gmap[-1,]
+geneList <- gmap[HGNC_hg19 %in% geneList, MGI_mm10]
+
+theme_publication <- function(font = 7) {
+  theme(
+    text = element_text(family = "Helvetica", size = font, color = "black"),
+    plot.title = element_text(size = font, color = "black"),
+
+    panel.background = element_rect(fill = "transparent", colour = NA),
+    panel.border = element_blank(),
+    plot.background = element_rect(fill = "transparent", colour = NA),
+
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+
+    axis.line = element_line(color = "black"),
+    axis.text = element_text(size = font, color = "black"), 
+    axis.ticks = element_line(size = 0.3, color = "black"),
+    axis.title = element_text(size = font, color = "black"),
+
+    # strip.background = element_rect(color = "white", fill = "white"),
+    strip.text.x = element_text(size = font, color = "black"),
+    strip.text.y = element_text(size = font, color = "black"),
+
+    legend.background = element_rect(
+      fill = alpha("white", 0),
+      color = alpha("white", 0)
+    ),
+    legend.key = element_rect(color = NA, fill = NA),
+    legend.key.size = unit(0.2, "cm"),    
+    legend.text = element_text(size = font)
+  )
+}
+
+foo <- function(snps, pvals) {
+  snps[ which.min(pvals)]
+}
+
+foo2 <- function(N, SNP) {
+  i <- which.max(N)
+  return(SNP[i])
+}
+
+
+manhattanPlot <- function(fit) {
+  getColorGroup <- function(Chr, Q, S) {
+    Chr <- as.numeric(Chr)
+    Q <- as.numeric(Q)
+    S <- as.numeric(S)
+    df <- data.frame(Chr, Q, S)
+    apply(df, 1, function(I) {
+      I <- as.list(I)
+      if (I$Chr %% 2 == 0) {
+        # Darker colors
+        if (I$Q > 0.05) {
+          "dark grey"
+        } else {
+          ifelse(I$S > 0, "dark positive", "dark negative")
+        }
+      } else {
+        # Brighter colors
+        if (I$Q > 0.05) {
+          "light grey"
+        } else {
+          ifelse(I$S > 0, "light positive", "light negative")
+        }
+      }
+    }) %>% unlist
+  }
+
+  fit[ log10(P) < -20, P := 1e-20]
+  effects <- 
+    fit[ Gene %in% geneList & Q < 0.05, ] %>% 
+      # count how many times each gene is negative of positive
+      .[, list(.N, SNP = foo(SNP, P), P = min(P)), by=list(Gene, sign(FC))] %>%
+      # select the sign which has more representation
+      .[, list(SNP=foo2(N, SNP)), Gene] %>%
+      .[, Label := TRUE] %>% 
+      merge(fit, ., by=c("Gene", "SNP"), all.x=TRUE)
+  effects[is.na(Label), Label := FALSE]
+  # effects[Label == TRUE]
+
+  # Format the input data
+  effects <- effects %>%
+    # Fix chromosome name 
+    .[, Chr := gsub("chr", "", Chr) ] %>% 
+    # Give chromosomes numbers
+    .[, ChrNo :=  Chr %>% gsub("X", "23", .) %>% gsub("Y", "24", .) %>% as.numeric]  %>%
+    # Make sure SNP is numeric
+    .[, SNP := as.numeric(SNP)] %>%
+    setkey(ChrNo, SNP)
+
+  # Prepare plot data
+  effects <- effects[!is.na(Q)]
+  # Points that will be painted grey
+  greyIds <- effects[Q > 0.05, ] %>% .[ID %in% sample(ID, .N*0.05, prob=-log10(P)), ID]
+  # Points that will be shown as significant
+  coloredIds <- effects[Q <= 0.05, ID]
+  pd <- effects %>% 
+    # Compute chromosome size
+    .[, list(ChrLen = max(SNP)), ChrNo] %>%
+    # Calculate cumulative position of each chromosome
+    .[, list(ChrNo, Tot = cumsum(ChrLen) - ChrLen)] %>%
+    # Add this info to the initial dataset
+    merge(effects, ., by=c("ChrNo")) %>%
+    # Subsample 
+    .[ ID %in% c(coloredIds, greyIds)] %>%      
+    # Sort by ChrNo and position 
+    .[ order(ChrNo, SNP), ] %>%
+    # Compute position for each SNP on x axis
+    .[, Loc := SNP + Tot] %>%
+    # Get color group
+    .[, Color := getColorGroup(ChrNo, !(Q < 0.05), FC) %>% as.factor ] %>%
+    setkey(Loc)
+
+
+  # Prepare the x axis
+  pdAxis <- pd %>% 
+    .[, list(center = ( max(Loc) + min(Loc) ) / 2 ), by=list(Chr, ChrNo)] %>%
+    # omit some chromosomes
+    .[, Chr := ifelse(ChrNo %in% seq(15, 21, 2), "", Chr)]
+
+
+  # Prepare FDR thresholds
+  pdThresholds <- pd[Q < 0.05, 
+     list(
+       Y = sign(max(FC)) * (-1) * log10(max(P)), 
+       Label = "q < 0.05"),
+     by = sign(FC)] %>%
+    .[, X := pd[, min(Loc)]]
+
+  # Prepare the core plot
+  ggplot(pd, aes(x=Loc, y=-1 * sign(FC) * log10(P))) +
+    # Show grey points
+    geom_point(data = pd[!(Q <= 0.05)], aes(color=Color, shape=Color), 
+      alpha=1, size=0.5) +
+    # Show significant points
+    geom_point(data = pd[Q <= 0.05], aes(color=Color, shape=Color), 
+      alpha=1, size=1) + 
+    # custom X axis:
+    scale_x_continuous( label = pdAxis$Chr, breaks= pdAxis$center) +
+    scale_y_continuous(limits = c(-20, 16)) +
+    scale_color_manual( values = c("grey60", "#1f78b4", "#33a02c", 
+                                   "grey80",   "#a6cee3","#b2df8a")) +
+    scale_shape_manual("", values = c(1, 16, 16, 1, 16, 16)) + 
+    guides(color = FALSE, shape = FALSE) +
+    # Add labels
+    geom_point(data=pd[Label == TRUE], color="orange", size=1.3) +
+    geom_text_repel(data=pd[Label == TRUE & FC > 0], aes(label=Gene), 
+      size=2.7, ylim=c(10, NA), segment.size = 0.25, force = 10) +
+    geom_text_repel(data=pd[Label == TRUE & FC < 0], aes(label=Gene), 
+      size=2.7, ylim=c(NA, -15), segment.size = 0.25, force = 10) +
+    # geom_label_repel(data=pd[Label == TRUE], aes(label=Gene), 
+    #   size=2.2, force=10, segment.size = 0.25) +    
+    # Label the axes
+    xlab("Chromosome") + 
+    ylab("Signed log p") + 
+    theme_publication()
+}
+
+```
+
+
+```{r}
+# Load mice DSS fits
+dss <- fread(Sys.glob("../Mice_DSS_Padlock/www/m6_*.csv"))
+
+# Load CP fits
+cp <- fread(Sys.glob("../Mice_CecalPatch_Padlock/www/m6_*.csv"))
+
+# Load APX fits
+apx <- fread(Sys.glob("../Appendix_PDvsControls_Padlock/www/m6_*.csv"))
+```
+
+```{r}
+# Manhattan plot of DSSvsSal@wt
+conA <- "GTwt_DSS - GTwt_Water"
+
+# Prepare the fit
+fit <- dss[, list(ID, Chr, SNP, Gene, 
+          P = get(glue("P.{conA}")), FC = get(glue("C.{conA}")))]
+fit[, Q := p.adjust(P, "fdr")]
+pA <- manhattanPlot(fit)
+
+
+```
+
+```{r}
+# Manhattan plot of DSSvsSal@mt
+
+conA <- "GTtg_DSS - GTtg_Water"
+
+# Prepare the fit
+fit <- dss[, list(ID, Chr, SNP, Gene, 
+          P = get(glue("P.{conA}")), FC = get(glue("C.{conA}")))]
+fit[, Q := p.adjust(P, "fdr")]
+
+pB <- manhattanPlot(fit)
+
+
+# ggdraw() +
+#   draw_plot(pA + 
+#     ylab("Wild type\nDSS - Saline, SLP") +
+#     theme(axis.text.x = element_blank(),
+#           axis.title.x = element_blank()),
+#     x = 0, y = 0.73, width = 0.75, height = 0.27) + 
+#   draw_plot(pB +
+#     ylab("A30P\nDSS - Saline, SLP"),
+#     x = 0, y = 0.42,  width = 0.75, height = 0.33)
+
+```
+
+```{r}
+# Directional enrichment
+getEnrichment <- function(dat) {
+  myt <- dat[, table(IsSignificant, sign(logFC))]
+  pd <- myt %>% as.data.table
+  pd <- cbind(pd, 
+              myt %>% fisher.test %>% broom::tidy() %>% .[, c("estimate", "p.value")])
+  pd <- pd %>% setnames(c("Significant", "Sign", "N", "OR", "P")) %>%
+    .[, Significant := factor(Significant, levels = c(FALSE, TRUE), labels = c("p > 0.05", "p < 0.05"))] %>%
+    .[, Sign := factor(Sign, levels = c(-1, 1), labels = c("Hypo-\nmethylation", "Hyper-\nmethylation"))] %>% 
+    .[order(Significant)] %>%
+    .[, F := N / sum(N), Significant]
+  pd
+}
+
+conA <- "GTwt_DSS - GTwt_Water"
+enWT <- 
+  dss[, list(
+        Q = get(glue("P.{conA}")) %>% p.adjust("fdr"), 
+        logFC = get(glue("C.{conA}")))
+  ] %>% 
+  .[, list(IsSignificant = Q < 0.05, logFC)] %>%
+  getEnrichment
+conA <- "GTtg_DSS - GTtg_Water"
+enMT <- 
+  dss[, list(
+        Q = get(glue("P.{conA}")) %>% p.adjust("fdr"), 
+        logFC = get(glue("C.{conA}")))
+  ] %>% 
+  .[, list(IsSignificant = Q < 0.05, logFC)] %>%
+  getEnrichment
+
+
+pd <- list(
+  enWT[, Name := "WT"],
+  enMT[, Name := "MT"]
+) %>% rbindlist
+pd[, OR := format(OR, digits=3)]
+pd[, P := format(P, digits=3, scientific=TRUE)]
+pd[, P := gsub("e", "~x~10^", P)]
+pd[, Label := paste0("~\"p=\"~", P)]
+pd[, Name := factor(Name, levels = c("WT", "MT"), labels = c("Wild-type", "A30P"))]
+
+pC <- 
+  ggplot(pd, aes(Sign, F, 
+               fill  = paste(Significant, Sign),
+               color = paste(Significant, Sign))) + 
+  geom_bar(stat = "identity", position = position_dodge(width=0.5)) +
+  geom_text(
+    data = pd[Sign == "Hypo-\nmethylation" & Significant == "p < 0.05"],
+    x = 1.5, y = 0.9, aes(label = Label),
+    size = 2.2, color = "black", parse = TRUE) + 
+  ylab("Fraction, %") + 
+  facet_wrap(~Name, ncol = 2) + 
+  # scale_fill_manual(values = c("blue", "green", "grey", "grey")) + 
+  scale_fill_manual("", values=c("#33a02c", "#1f78b4", "white", "white")) + 
+  scale_color_manual("", values=c("#33a02c", "#1f78b4", "grey60", "grey60")) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 2), limits = c(0, 1)) + 
+  guides(fill = FALSE, color = FALSE) + 
+  ggtitle("DSS effect in:") +
+  theme_publication() + 
+  theme(axis.title.x = element_blank())
+```
+
+```{r}
+
+dt <- dss[, list(
+    WT = `C.GTwt_DSS - GTwt_Water`, 
+    P.WT = `P.GTwt_DSS - GTwt_Water`, 
+    A30P = `C.GTtg_DSS - GTtg_Water`,
+  	P.A30P = `P.GTtg_DSS - GTtg_Water`)]
+
+dt[, PosEffect := FALSE]
+dt[, PosEffect := sign(WT) == sign(A30P) & abs(WT) < abs(A30P)]
+dt[, Significant :=p.adjust(P.WT, "fdr") < 0.05 | p.adjust(P.A30P, "fdr") < 0.05]
+myt <- dt[, table(PosEffect=PosEffect, Significant=Significant)]
+fisher.test(myt)
+dt <- rbind(
+		data.table(Type=" NS", Risk=myt[2,1]/sum(myt[,1])),
+		data.table(Type="Significant\ncytosines", Risk=myt[2,2]/sum(myt[,2])))
+dt[, Facette := "A30P > WT"]
+dt[, Odds := Risk / (1-Risk)]
+
+f <- fisher.test(myt) %>% broom::tidy()
+f$estimate <- format(f$estimate, digits=3)
+f$p.value <- 
+	format(f$p.value, digits=3, scientific=TRUE) %>%
+	gsub("e", "~x~10^", .)
+
+label = list(glue("'OR = '~{f$estimate}"), 
+             glue("'p = '~{f$p.value}"))
+
+pD <-
+	ggplot(dt, aes(Type, Odds, color=Type, fill=Type)) + 
+	geom_bar(stat="identity", width=0.7) + 
+	geom_text(x = 0.5, 
+	          y = 0.8 - c(0.02, 0.1), 
+	          hjust=0,
+	          color = "black",
+	          label=label, 
+	          parse=TRUE,
+	          size = 2.2) + 
+	# facet_wrap(~Facette) + 
+	scale_fill_manual("", values=c("white", "grey30")) + 
+	scale_color_manual("", values=c("grey30", "grey30")) + 
+	guides(fill = FALSE, color = FALSE) + 
+	ylim(0, 0.8) + 
+	ggtitle("Increased DSS effect\nin A30P") +
+	theme_publication() + 
+	theme(axis.title.x = element_blank())
+
+# pD
+
+```
+
+
+```{r}
+# Correlation of enrichments in CecalPatch and DSS
+
+dt <- fread("../Results_Mice/ORs_CecalPatch_DSS.csv")
+dt[, Star := gtools::stars.pval(p.value)]
+dt <- dt[1:4]
+dt[, Contrast := gsub("GT", "", Contrast)]
+dt[, Contrast := gsub("wt", "WT", Contrast)]
+dt[, Contrast := gsub("tg", "A30P", Contrast)]
+dt[, Contrast := factor(Contrast, levels = Contrast)]
+pE <- 
+  ggplot(dt, aes(Contrast, estimate)) + 
+  geom_bar(stat = "identity", color = "black", fill="white", size = 0.25) + 
+  geom_text(aes(label = Star), vjust = -1, size = 2.2) + 
+  ylab("Concordance") +
+  theme_publication() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+# Correlation of enrichments in appendix vs Mice
+
+dt <- fread("../Results_Mice/ORs_Appendix_Mice.csv")
+dt[, Star := gtools::stars.pval(p.value)]
+dt[, Contrast := gsub("GT", "", Contrast)]
+dt[, Contrast := gsub("wt", "WT", Contrast)]
+dt[, Contrast := gsub("tg", "A30P", Contrast)]
+dt[5, Contrast := sprintf('rAAV \u03B1-syn')]
+dt[, Contrast := factor(Contrast, levels = Contrast)]
+
+pF <- 
+  ggplot(dt, aes(Contrast, estimate)) + 
+  geom_bar(stat = "identity", position=position_dodge(width=0.8), 
+           color = "black", fill="white",
+           size = 0.25, width=0.8) + 
+  geom_text(aes(label = Star), 
+            vjust = -0.3, hjust=0.5, size=3.3, #size = 2.2,
+            color = "black",
+          	position=position_dodge(width=0.8)) + 
+  ylab("Concordance") +
+  scale_y_continuous(limits=c(-0.02, 0.13)) + 
+  scale_fill_manual(values = c("white", "grey")) + 
+  theme_publication() +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+# pF
+ggdraw() + 
+draw_plot(
+	pF + 
+	  ggtitle("Human PD vs\nmice studies") + 
+	  theme(
+	  	plot.title = element_text(face = "plain"),
+	  	legend.position=c(0.4,0.9)
+	  ),
+  x = 0.8, y = 0.165, width = 0.2, height = 0.35)
+
+```
+
+```{r, include=TRUE, fig.width=7.2, fig.height=7.2}
+# quartz("", 7.2, 7.2)
+suppressWarnings(
+	ggdraw() + 
+	  draw_image("../Figure5/Fig5_mousediagram.png", 
+	    x = 0, y = 0.85, width = 1, height = 0.15) + 
+	  draw_plot(pA + 
+	    ylab("Wild type\nDSS - Water, SLP") +
+	    theme(axis.text.x = element_blank(),
+	          axis.title.x = element_blank()),
+	    x = 0, y = 0.7, width = 1, height = 0.16) +
+	  draw_plot(pB +
+	    ylab("A30P\nDSS - Water, SLP"),
+	    x = 0, y = 0.49,  width = 1, height = 0.23) + 
+	  draw_plot(pC,
+	    x = 0, y = 0.24, width = 0.44, height = 0.27) + 
+	  draw_plot(pD + 
+	    theme(legend.position = "none"),
+	    x = 0.41, y = 0.24, width = 0.22, height = 0.25) + 
+	  draw_plot(pE + ylim(0, 0.25) + 
+	    ggtitle(sprintf("rAAV-\u03B1-syn vs\nDSS study")) + 
+	    theme(plot.title = element_text(face = "plain")),
+	    x = 0.62, y = 0.145, width = 0.2, height = 0.35) +
+	  draw_plot(pF + 
+	    ggtitle("PD appendix vs\nmice studies") + 
+	    theme(plot.title = element_text(face = "plain"),
+	  				legend.position=c(0.4,0.9)),
+	    x = 0.8, y = 0.145, width = 0.2, height = 0.35) +
+	  draw_plot_label(
+	    label = LETTERS[1:7],
+	    size = 10,
+	    x = c(0, 0,    0,    0,     0.43, 0.65, 0.83),
+	    y = c(1, 0.86, 0.72, 0.49,  0.49, 0.49, 0.49))
+)
+ggsave("../Figure5/figure5.png", width = 7.2, height = 7.2, dpi = 300, units = "in")
+```
+
+

@@ -1,0 +1,557 @@
+---
+title: "Results Appendix"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE, echo=FALSE}
+require(weights)
+require(doParallel)
+require(TxDb.Hsapiens.UCSC.hg19.knownGene)
+require(org.Hs.eg.db)
+require(cowplot)
+source("../code/common.R")
+source("../code/pformat.R")
+source("../code/genomicEnrichment.R")
+annotations <- cache(foo=loadHumanAnnotations,
+                     fname = "annotations.RDS")
+pathways <- readRDS("../Discover_Pathways/humanPathways.RDS")
+```
+
+# Appendix PD vs Controls, Padlocks
+
+```{r}
+apx <- fread("../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv")
+apd <- readRDS("../Appendix_PDvsControls_Padlock/www/m6_methylation.RDS")
+```
+
+
+```{r, include=TRUE, results='asis'}
+n <- nrow(apx)
+glue("- Number of loci {n}")
+t <- apd$key[, table(Diagnosis)]
+glue("- Number of PD cases: {t[2]} and controls: {t[1]}")
+n <- apx[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+glue("- Number of significant loci {n}")
+n <- apx[adj.P.Val < 0.05, length(unique(Gene))]
+glue("- Number of genes affected {n}")
+```
+
+Dominant direction of methylation:
+
+```{r, include=TRUE}
+t <-
+	apx[, list(
+						Significant = ifelse(adj.P.Val < 0.05, "Significant", "NS"), 
+					 	Direction = ifelse(logFC < 0, "Hypo-M", "Hyper-M")
+					 )] %>%
+	.[, table(Significant, Direction)] %>%
+	.[c("NS", "Significant"), c("Hypo-M", "Hyper-M")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+broom::tidy() %>%
+knitr::kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+
+```{r}
+url <- "../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv"
+stopifnot(file.exists(url))
+```
+
+- **[Additional File 2](`r url`) DNA methylation changes in the appendix of PD patients relative to controls.**
+
+
+## Enrichment of genomic elements
+
+```{r}
+foo <- function(analysis, prefix, annotations, t) {
+  fits <- fread(glue("../{analysis}/www/{prefix}_{analysis}.csv"))
+  dt1 <- getAnnotatrEnrichments(fits, annotations, qThresh = t)
+  dt2 <- getAppendixChipEnrichments(fits, qThresh = t)
+  dt3 <- getEpiRoadmapEnrichment(fits, qThresh = t)
+  dt4 <- getPsychEncodeEnrichments(fits, qThresh = t)
+  return(list(dt1, dt2, dt3, dt4))
+}
+analysis <- "Appendix_PDvsControls_Padlock"
+prefix <- "m6"
+t <- 0.05
+# touch()
+dtlist <- cache(
+  foo = foo, fname = glue("enrichment_{analysis}.RDS"), verbose = TRUE,
+  analysis = analysis, prefix= prefix, annotations = annotations,
+  t = t
+  )
+```
+
+General annotation of genomic elements:
+
+```{r, include=TRUE}
+dtlist[[1]] %>%
+.[Type == "All"] %>%
+.[, `P < 0.05` := texPstars(`P < 0.05`)] %>%
+select(estimate=OR, 
+       p.value=P, 
+       conf.low=Lo, 
+       conf.high=Hi, 
+       category=Category, 
+       p_stars = `P < 0.05`) %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+Genomic elements obtained from ChIP-seq:
+
+```{r, include=TRUE}
+dtlist[[2]] %>%
+.[, `P < 0.05` := texPstars(`P < 0.05`)] %>%
+select(estimate=OR, 
+       p.value=P, 
+       conf.low=Lo, 
+       conf.high=Hi,
+       type=Type, 
+       category=Category, 
+       p_stars = `P < 0.05`) %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+
+```{r}
+myplots <- plotAnnotatrEnrichment(dtlist[[1]])
+myplots[[1]] <- myplots[[1]] + facet_grid(Type~.)
+myplots[[2]] <- myplots[[2]] + facet_grid(Type~.)
+myplots[[3]] <- plotAppendixChipEnrichment(dtlist[[2]], wrap = "vertical")
+```
+
+```{r, include=TRUE, fig.cap="**Figure S2. Genomic elements enriched with differentially methylated cytosines in the PD appendix.**"}
+ggarrange(myplots[[1]], myplots[[2]], myplots[[3]],
+  ncol = 3, nrow = 1, labels = LETTERS[1:3],
+  widths = c(4, 7, 3),
+  common.legend = TRUE)
+```
+
+
+
+
+# Appendix PD vs Controls, RNAseq
+
+```{r}
+rna <- fread("../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv")
+apd <- readRDS("../Appendix_PDvsControls_RNAseq/www/r1_rnaseq.RDS")
+```
+
+
+```{r, include=TRUE, results='asis'}
+n <- nrow(rna)
+glue("- Number of transcripts {n}")
+t <- apd$key[, table(Diagnosis)]
+glue("- Number of PD cases: {t[2]} and controls: {t[1]}")
+n <- rna[, sum(adj.P.Val < 0.05, na.rm=TRUE)]
+glue("- Number of significant transcripts {n}")
+```
+
+
+Dominant direction of transcription change:
+
+```{r, include=TRUE}
+t <-
+	rna[, list(
+						Significant = ifelse(adj.P.Val < 0.05, "Significant", "NS"), 
+					 	Direction = ifelse(logFC < 0, "Down", "Up")
+					 )] %>%
+	.[, table(Significant, Direction)] %>%
+	.[c("NS", "Significant"), c("Down", "Up")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+broom::tidy() %>%
+knitr::kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+
+Dominant downregulation among the ALP transcripts:
+
+```{r, include=TRUE}
+alpGenes <- apx[, unique(Gene)]
+t <-
+	rna[, list(
+						Significant = ifelse(adj.P.Val < 0.05 & logFC < 0, "Down-regulated", "NS"), 
+					 	Gene = ifelse(SYMBOL %in% alpGenes, "ALP", "Other")
+					 )] %>%
+	.[, table(Significant, Gene)] %>%
+	.[c("NS", "Down-regulated"), c("Other", "ALP")]
+
+# Show the table
+knitr::kable(t) %>%
+kable_styling(bootstrap_options = c("hover"),
+							full_width = FALSE)
+
+# Show fisher test result
+t %>% fisher.test %>% 
+broom::tidy() %>%
+knitr::kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+
+```{r}
+url <- "../Appendix_PDvsControls_RNAseq/www/r1_Appendix_PDvsControls_RNAseq.csv"
+stopifnot(file.exists(url))
+```
+
+- **[Additional File 3](`r url`) Differentially expressed ALP genes in the appendix of PD patients relative to controls.**
+
+
+# Enrichment of ALP pathways
+
+## In appendix epigenome
+
+```{r}
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  res1 <- apx[, table( adj.P.Val < 0.05, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Target"] %>% 
+          .[, Dir := "All"]
+  res2 <- apx[, table( adj.P.Val < 0.05 & logFC > 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Target"] %>% 
+          .[, Dir := "Hyper-"]
+  res3 <- apx[, table( adj.P.Val < 0.05 & logFC < 0, Gene %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "Target"] %>% 
+          .[, Dir := "Hypo-"]
+  rbindlist(list(res1, res2, res3))
+}
+if (!dir.exists("www")) dir.create("www")
+fwrite(pd, file = "www/enrichment_Pathways_DMCs.csv")
+```
+
+```{r, include = TRUE}
+pd %>%
+.[, `P < 0.05` := gtools::stars.pval(p.value)] %>% 
+.[, list(estimate, p.value, conf.low, conf.high,
+				 term = sprintf("%s (%s)", Name, Term),
+				 direction = Dir, 
+				 p_stars = texPstars(`P < 0.05`))] %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+## In appendix transcriptome
+
+```{r}
+pd <- foreach(p = pathways, .combine = rbind) %do% {
+  genes <- p$genes
+  res1 <- rna[, table( P.Value < 0.05, SYMBOL %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "RNA"] %>% 
+          .[, Dir := "All"]
+  res2 <- rna[, table( P.Value < 0.05 & logFC > 0, SYMBOL %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "RNA"] %>% 
+          .[, Dir := "Hyper-"]
+  res3 <- rna[, table( P.Value < 0.05 & logFC < 0, SYMBOL %in% genes)] %>% 
+          fisher.test %>%
+          broom::tidy() %>%
+          setDT %>%
+          .[, Term := p$term] %>%
+          .[, Name := p$name] %>%
+          .[, Type := "RNA"] %>% 
+          .[, Dir := "Hypo-"]
+  rbindlist(list(res1, res2, res3))
+}
+if (!dir.exists("www")) dir.create("www")
+fwrite(pd, file = "www/enrichment_Pathways_DEGs.csv")
+```
+
+```{r, include = TRUE}
+pd %>%
+.[, `P < 0.05` := gtools::stars.pval(p.value)] %>% 
+.[, list(estimate, p.value, conf.low, conf.high,
+				 term = sprintf("%s (%s)", Name, Term),
+				 direction = Dir, 
+				 p_stars = texPstars(`P < 0.05`))] %>%
+kable() %>%
+kable_styling(bootstrap_options = c("hover"))
+```
+
+<!--  -->
+```{r, include=TRUE, fig.cap="**Figure S3. ALP pathway changes in DNA methylation and gene expression in the PD appendix.**"}
+pd <- rbind(
+  fread("www/enrichment_Pathways_DEGs.csv"), 
+  fread("www/enrichment_Pathways_DMCs.csv")[, Type := "Methylation"])
+
+p1 <- 
+	pd[Type == "Methylation"] %>%
+	ggplot(aes(Name, log(estimate), color = p.value < 0.05)) + 
+	  geom_point(size = 4) + 
+	  geom_errorbar(aes(ymin = log(conf.low), ymax = log(conf.high)), size = 0.25, width = 0.25, color = "black") + 
+	  geom_hline(yintercept = 0) + 
+	  ylab("OR, log") +
+	  facet_grid(Type ~ Dir) + 
+	  scale_color_brewer("P < 0.05", palette="Dark2") + 
+	  theme_bw(base_size = 14) + 
+	  theme(axis.title.x = element_blank(),
+	        axis.text.x = element_blank(),
+	        legend.position = "top")
+
+levels <- c("All", "Hypo-", "Hyper-")
+labels <- c("All", "Down-regulation", "Up-regulation")
+
+p2 <- 
+	pd[Type == "RNA"] %>% 
+	.[, Dir := factor(Dir, levels = levels, labels = labels)] %>%
+	ggplot(aes(Name, log(estimate), color = p.value < 0.05)) + 
+	  geom_point(size = 4) + 
+	  geom_errorbar(aes(ymin = log(conf.low), ymax = log(conf.high)), size = 0.25, width = 0.25, color = "black") + 
+	  geom_hline(yintercept = 0) + 
+	  ylab("OR, log") +
+	  facet_grid(Type ~ Dir) + 
+	  scale_color_brewer("P < 0.05", palette="Dark2") + 
+	  theme_bw(base_size = 14) + 
+	  theme(axis.title.x = element_blank(),
+	        axis.text.x = element_text(angle = 60, hjust = 1),
+	        legend.position = "none")
+
+
+ggdraw() + 
+	draw_plot(p1, x=0, y=0.6, width = 1, height = 0.4) +
+	draw_plot(p2, x=0.015, y=0, width = 1-0.015, height = 0.6)
+```
+
+# Enrichment near lysosomal genes
+
+
+```{r}
+annotateTargetGenes <- function(fromFitFile) {
+	# The full list of targeted genes
+	targetGenes <- 
+		fread(fromFitFile) %>%
+		.[, unique(Gene)]
+
+	g = genes(TxDb.Hsapiens.UCSC.hg19.knownGene)
+	xx <- as.list(org.Hs.egSYMBOL2EG)
+
+	geneCoordinates <-
+		g %>% 
+		as.data.table %>%
+		.[, list(Chr=seqnames, Start=start, End=end, Strand=strand, ID=gene_id)] %>%
+		setkey(ID)
+
+	id2symbol <- 
+		lapply(names(xx), function(gene) { data.table(Symbol=gene, ID=xx[[gene]])}) %>% 
+		rbindlist %>%
+		setkey(ID)
+
+	targetCoordinates <- 
+		merge(geneCoordinates, id2symbol) %>%
+		.[Symbol %in% targetGenes]
+
+	targetCoordinates[, Type := "Other targeted ALP genes"]
+	targetCoordinates[Symbol %in% pathways[[3]]$genes,
+											Type := "Lysosome genes"]
+
+	targetCoordinates[, list(Symbol, Type, Chr, Start, End, Strand)]
+}
+
+loadData <- function(dataFile, fitFile) {
+	met <- readRDS(dataFile)
+	data <- list()
+	data$key <- met$key
+	data$met <- met$methylation[, as.character(data$key$Sample_ID)]
+	data$genome_met <- met$genome
+	data$fit <- fread(fitFile)
+	data
+}
+
+computeEnrichment <- function(data, targetGenes) {
+	dt <- merge(data$fit[, list(Gene, SNP, P.Value, adj.P.Val)], 
+	            targetGenes[, list(Symbol, Type, Strand, Chr, Start, End)], 
+	            by.x = "Gene", 
+	            by.y = "Symbol", 
+	            all.x = TRUE)
+	dt <- dt %>% na.omit
+
+	dt[Strand == "-", GeneStart := End]
+	dt[Strand == "+", GeneStart := Start]
+	dt[, Dist := abs(SNP - GeneStart) ]
+	dt[, Bracket := Dist %/% 20000]
+	dt[Dist > 600000, Bracket := NA]
+	dt[, table(Bracket)]
+	brackets <- dt[, unique(Bracket)]
+
+	# Compute for subsets
+	pd <-
+		foreach( target = dt[, unique(Type)]) %do% {
+			foreach( bracket = brackets) %do% {
+				tryCatch({
+					dt[Type == target, table(Bracket == bracket, adj.P.Val < 0.05)] %>%
+					fisher.test %>%
+					broom::tidy() %>%
+					setDT %>%
+					.[, Bracket := bracket]		
+				}, error = function(e) {
+					data.table(Bracket = bracket, p.value = NA)
+				})
+			} %>%
+			rbindlist(fill=TRUE) %>%
+			.[, Target := target]
+		} %>%
+		rbindlist(fill=TRUE)
+	
+	# Compute for all
+	pd2 <-
+		foreach( bracket = brackets) %do% {
+			tryCatch({
+				dt[, table(Bracket == bracket, adj.P.Val < 0.05)] %>%
+				fisher.test %>%
+				broom::tidy() %>%
+				setDT %>%
+				.[, Bracket := bracket]		
+			}, error = function(e) {
+				data.table(Bracket = bracket, p.value = NA)
+			})
+		} %>%
+		rbindlist(fill=TRUE) %>% 
+		.[, Target := "All"]
+	pd <- rbind(pd, pd2)
+	pd[, Q := p.adjust(p.value, "fdr")]
+	pd[Q < 0.05]
+	return(pd)
+}
+
+plotEnrichment <- function(pd) {
+	pd <- pd[Bracket <= 13]
+	labels <- seq(20, 600, 20)
+	breaks <- 0:(length(labels)-1)
+	labels <- glue("[{labels-20}, {labels})")
+
+	pd %>%
+	.[, Q := p.adjust(p.value, "fdr")] %>%
+	ggplot(aes(Bracket, log(estimate), group=Target)) + 
+	geom_errorbar(
+								aes(ymin=log(conf.low), 
+								    ymax=log(conf.high)),
+								position=position_dodge(width=0.5),
+								width=0.2, 
+								color="grey70") + 
+	geom_point(aes(color=Q<0.05), size=4, 
+	           position=position_dodge(width=0.5)) + 
+	geom_line(linetype=2, color="grey70",
+	          position=position_dodge(width=0.5)) + 
+	geom_hline(yintercept=0, color="grey") + 
+	facet_wrap(~Target) + 
+	scale_x_continuous("Absolute distance to gene start, kbp",
+											breaks = breaks, 
+											labels = labels) + 
+	scale_color_brewer("FDR q < 0.05", 
+	                   palette="Dark2", 
+	                   direction=1 ) + 
+	ylab("Odds ratio, log") +
+	theme_bw(base_size=14) + 
+	theme(legend.position = "top",
+	      panel.grid.major = element_blank(),
+	      panel.grid.minor = element_blank(),
+				axis.text.x = element_text(angle=45, hjust=1))
+}
+```
+
+```{r}
+data <- loadData(
+	"../Appendix_PDvsControls_Padlock/www/m6_methylation.RDS",
+	"../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv"
+)
+# touch()
+targetGenes <- 
+	cache(
+		foo   = annotateTargetGenes, 
+		fname = "targetsAppendix.RDS",
+		fromFitFile = "../Appendix_PDvsControls_Padlock/www/m6_Appendix_PDvsControls_Padlock.csv"
+	)
+pd <- computeEnrichment(data, targetGenes)
+```
+
+```{r, include=TRUE}
+pd[Bracket <= 9][, Q := p.adjust(p.value, "fdr")][Q < 0.2] %>%
+select(-method, -alternative) %>%
+kable() %>%
+kable_styling(bootstrap_options="hover")
+```
+
+
+```{r, include=TRUE, fig.cap="**Figure S4. Proximity of DNA methylation changes to ALP genes.**"}
+plotEnrichment(pd)
+```
+
+
+
+# Correlation of fold changes
+
+
+```{r}
+dt <- 
+	merge(apx[, list(Gene, ID, Str, logFC, P.Value, adj.P.Val)],
+			rna[, list(Gene = SYMBOL, Str, logFC, P.Value, adj.P.Val)],
+			by = "Gene")
+
+dt2 <- 
+	dt %>% 
+	.[Str.x == Str.y] %>% 
+	.[, list(weighted.mean(logFC.x, -log(adj.P.Val.x), na.rm=TRUE), 
+	          logFC.y[1], P.Value.y[1]), Gene]
+
+```
+
+N = `r nrow(dt2)` genes.
+
+```{r, include=TRUE}
+dt2[, wtd.cor(V1, V2, weight=-log(V3))] %>%
+kable() %>%
+kable_styling(bootstrap_options="hover")
+```
+

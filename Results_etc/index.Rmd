@@ -1,0 +1,91 @@
+---
+title: "etc"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: 
+      collapsed: false
+    includes:
+      in_header: ../include/in_header.html
+      before_body: ../include/before_body.html
+      after_body: ../include/after_body.html
+runtime: shiny_prerendered
+---
+<!-- # (c)  Juozas Gordevičius -->
+
+```{r, include=FALSE}
+source("../code/common.R")
+require("cowplot")
+require("xlsx")
+```
+
+```{r}
+studies <- list.files(path = "../", pattern = "*Padlock*|*RNAseq*")
+
+res <-
+foreach (study = studies) %do% {
+	message("Loading study: ", study)
+	path <- file.path("..", study, "www")
+	name <- paste0("m6_methylation.RDS")
+	if (file.exists(file.path(path, name))) {
+		# padlock study
+		x <- readRDS(file.path(path, name))
+		x$key[, Study := study]
+	} else {
+		name <- name <- paste0("r1_rnaseq.RDS")
+		if (file.exists(file.path(path, name))) {
+			# rnaseq study
+			x <- readRDS(file.path(path, name))
+			x$key[, Study := study]
+		} else {
+			message(study, ": no file?")
+		}
+	}
+}
+names(res) <- studies
+
+
+file <- "www/sampleKey.xlsx"
+unlink(file)
+for (study in studies) {
+	write.xlsx(res[[study]], file, sheetName=study, 
+	  col.names=TRUE, row.names=FALSE, append=TRUE)
+}
+
+url <- "./www/sampleKey.xlsx"
+```
+
+- **[Additional File 16](`r url`) Demographic and clinical information for human samples.**
+
+<!--  -->
+
+```{r}
+# Data primers
+if (!dir.exists("www")) 
+	dir.create('www')
+
+file.copy("../etc/Supplementary Data_primers.xlsx", "www/")
+```
+
+
+```{r}
+url <- "./www/Supplementary Data_primers.xlsx"
+stopifnot(file.exists(url))
+```
+
+- **[Additional File 17](`r url`) Padlock probe libraries and study primers.**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
